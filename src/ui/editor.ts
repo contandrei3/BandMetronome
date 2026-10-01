@@ -1,3 +1,4 @@
+import { ROLES, type Role } from '../roles';
 import { newSong, normalizeSong, type Marker, type Song } from '../song';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -70,7 +71,12 @@ function markerRow(m: Marker): HTMLElement {
       <label class="flex flex-col items-center">Treptat<input data-f="ramp" type="checkbox" class="mt-2 h-6 w-6 accent-amber-500"></label>
       <button data-f="remove" class="ml-auto h-10 w-10 rounded-lg bg-neutral-900 text-lg" aria-label="Șterge rândul">✕</button>
     </div>
-    <input data-f="text" placeholder="Instrucțiune (ex: REFREN – Explozie)" class="rounded-lg bg-neutral-900 px-3 py-2">`;
+    <input data-f="text" placeholder="Instrucțiune (ex: REFREN – Explozie)" class="rounded-lg bg-neutral-900 px-3 py-2">
+    <div class="flex flex-wrap items-center gap-1 text-xs text-neutral-500">
+      <span class="mr-1">Pentru:</span>
+      ${ROLES.map((r) => `<button type="button" data-role="${r.id}" class="chip">${r.icon} ${r.short}</button>`).join('')}
+      <span data-f="everyone" class="ml-1">toți</span>
+    </div>`;
   const f = (name: string) => row.querySelector<HTMLInputElement>(`[data-f="${name}"]`)!;
   f('bar').value = String(m.bar);
   f('bpm').value = m.bpm !== undefined ? String(m.bpm) : '';
@@ -78,6 +84,16 @@ function markerRow(m: Marker): HTMLElement {
   f('ramp').checked = !!m.ramp;
   f('text').value = m.text ?? '';
   f('remove').addEventListener('click', () => row.remove());
+  const chips = [...row.querySelectorAll<HTMLButtonElement>('[data-role]')];
+  const paint = () => f('everyone').classList.toggle('hidden', chips.some((c) => c.classList.contains('on')));
+  for (const c of chips) {
+    c.classList.toggle('on', !!m.roles?.includes(c.dataset.role as Role));
+    c.addEventListener('click', () => {
+      c.classList.toggle('on');
+      paint();
+    });
+  }
+  paint();
   return row;
 }
 
@@ -93,6 +109,7 @@ function readRow(row: HTMLElement): Marker | null {
     ...meter,
     ramp: f('ramp').checked && bpm > 0 ? true : undefined,
     text: f('text').value.trim() || undefined,
+    roles: [...row.querySelectorAll<HTMLButtonElement>('[data-role].on')].map((c) => c.dataset.role as Role),
   };
 }
 

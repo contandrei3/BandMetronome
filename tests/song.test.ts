@@ -83,3 +83,25 @@ describe('songPosition', () => {
     expect(songPosition(info, 11)).toMatchObject({ section: 'Final', barInSection: 4, sectionBars: 4, next: undefined });
   });
 });
+
+describe('role-specific cues', () => {
+  const s: Song = {
+    ...song,
+    markers: [
+      { bar: 1, bpm: 120, beatsPerBar: 4, text: 'Intro' },
+      { bar: 5, text: 'Refren' },
+      { bar: 5, text: 'SOLO', roles: ['lead'] },
+      { bar: 9, text: 'Fără tobe', roles: ['drums'] },
+    ],
+  };
+  const info = songTransport(s, 0, 1).song!;
+  it('shows a role cue only to that role', () => {
+    expect(songPosition(info, 5, 'lead').section).toBe('SOLO');
+    expect(songPosition(info, 5, 'bass').section).toBe('Refren');
+    expect(songPosition(info, 5, null).section).toBe('Refren');
+  });
+  it('announces upcoming cues only to the roles they are for', () => {
+    expect(songPosition(info, 6, 'drums').next?.text).toBe('Fără tobe');
+    expect(songPosition(info, 6, 'bass').next).toBeUndefined();
+  });
+});

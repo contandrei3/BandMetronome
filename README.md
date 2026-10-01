@@ -24,7 +24,25 @@ local (Web Audio); prin rețea circulă doar sincronizarea ceasului și comenzil
   următoarea se încarcă automat (oprită).
 - **Pe ecranul tuturor**: secțiunea curentă, „Măsura 3 din 8”, măsura din piesă și, cu o măsură înainte
   de orice schimbare, banner „URMEAZĂ: …” și flash roșu pe fiecare bătaie.
-- Biblioteca se salvează local pe telefonul Master (merge fără internet). Sincronizarea cu Firebase urmează.
+- Biblioteca e în Firebase (vezi mai jos), cu copie locală pe fiecare dispozitiv, deci merge și fără internet.
+
+## Roluri și interfață
+
+- La prima deschidere fiecare își alege rolul: Tobe, Chitară lead, Chitară ritm, Bas, Solist vocal
+  (fără parolă; se poate schimba din meniu). Oricine poate porni o sesiune ca Master.
+- Meniu în stânga (fix pe laptop, sertar ☰ pe telefon): Sesiune, Piese, Setlist, Setări.
+- Instrucțiunile din piese pot fi pentru toți sau doar pentru anumite roluri (ex. „SOLO” doar pentru lead).
+
+## Firebase (piese comune pentru toată trupa)
+
+1. [console.firebase.google.com](https://console.firebase.google.com) → proiect nou.
+2. **Build → Firestore Database → Create database** (locație `eur3`).
+3. **Firestore → Rules**: copiază conținutul din `firestore.rules` și apasă **Publish**.
+4. **Build → Authentication → Get started → Sign-in method → Anonymous → Enable**.
+5. **Project settings → Your apps → Web (</>)** → copiază obiectul `firebaseConfig` în `src/firebaseConfig.ts`.
+
+Fără configurare, piesele rămân doar pe dispozitivul pe care au fost create. La prima conectare, piesele
+existente pe dispozitiv sunt urcate automat dacă baza de date e goală.
 
 ## Calibrarea latenței Bluetooth
 

@@ -1,3 +1,4 @@
+import { cueIsFor, type Role } from './roles';
 import { beatOffset, splitSegment, type Cue, type Segment, type SongInfo, type Transport } from './timeline';
 
 /**
@@ -14,8 +15,10 @@ export interface Marker {
   beatUnit?: number;
   /** Reach `bpm` gradually over the bars since the previous tempo marker instead of jumping. */
   ramp?: boolean;
-  /** Instruction shown to everyone from this bar on. */
+  /** Instruction shown from this bar on. */
   text?: string;
+  /** Who sees `text`; empty or missing = the whole band. */
+  roles?: Role[];
 }
 
 export interface Song {
@@ -47,7 +50,7 @@ export function normalizeSong(song: Song): Song {
   const markers: Marker[] = song.markers
     .filter((m) => m.bar >= 1 && m.bar <= song.bars)
     .sort((a, b) => a.bar - b.bar)
-    .map((m) => ({ ...m, text: m.text?.trim() || undefined }));
+    .map((m) => ({ ...m, text: m.text?.trim() || undefined, roles: m.roles?.length ? m.roles : undefined }));
   if (markers[0]?.bar !== 1) markers.unshift({ bar: 1 });
   const first = markers[0];
   first.bpm ??= 120;
@@ -125,6 +128,7 @@ export function songTransport(input: Song, startAt: number, rev: number, fromBar
     beatsPerBar: m.beatsPerBar,
     beatUnit: m.beatsPerBar !== undefined ? (m.beatUnit ?? 4) : undefined,
     ramp: m.ramp,
+    roles: m.roles,
   }));
   const info: SongInfo = {
     title: song.title,
@@ -152,17 +156,23 @@ export interface SongPosition {
   barsToNext?: number;
 }
 
-/** Where `bar` (global) sits in the song's structure, for the on-screen prompts. */
-export function songPosition(info: SongInfo, bar: number): SongPosition {
+/**
+ * Where `bar` (global) sits in the song's structure, for the on-screen
+ * prompts of `role`. Instructions meant for other roles are ignored, so a
+ * "SOLO" for the lead guitar replaces the section name only on that phone.
+ */
+export function songPosition(info: SongInfo, bar: number, role: Role | null = null): SongPosition {
   if (bar < info.firstBar) {
     return { barInSection: bar - info.firstBar + 1, sectionBars: 0, songBar: info.firstSongBar, countIn: true };
   }
-  const texts = info.cues.filter((c) => c.text);
+  const texts = info.cues.filter((c) => c.text && cueIsFor(c.roles, role));
   const current = texts.findLast((c) => c.bar <= bar);
   const following = texts.find((c) => c.bar > bar);
   const start = current?.bar ?? 0;
   const end = following?.bar ?? info.endBar;
-  const next = info.cues.find((c) => c.bar > bar);
+  // Tempo/meter changes concern everyone; text-only cues only their roles.
+  const visible = (c: Cue) => c.bpm !== undefined || c.beatsPerBar !== undefined || (c.text && cueIsFor(c.roles, role));
+  const next = info.cues.find((c) => c.bar > bar && visible(c));
   return {
     section: current?.text,
     barInSection: bar - start + 1,

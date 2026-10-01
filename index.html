@@ -9,150 +9,218 @@
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body class="min-h-dvh bg-black text-neutral-100 antialiased select-none">
-    <!-- Start screen -->
-    <main id="start" class="mx-auto flex min-h-dvh max-w-md flex-col justify-center gap-6 p-6">
-      <h1 class="text-center text-3xl font-black tracking-tight">Band Metronome</h1>
-      <label class="block">
-        <span class="text-sm text-neutral-400">Numele tău</span>
-        <input id="name" maxlength="20" class="mt-1 w-full rounded-xl bg-neutral-900 px-4 py-3 text-lg outline-none focus:ring-2 focus:ring-amber-500" placeholder="ex: Bas" />
-      </label>
-      <div class="rounded-2xl bg-neutral-950 p-4 ring-1 ring-neutral-800">
-        <span class="text-sm text-neutral-400">Cod sesiune</span>
-        <input id="code" inputmode="numeric" maxlength="4" pattern="[0-9]*" class="mt-1 w-full rounded-xl bg-neutral-900 px-4 py-4 text-center font-mono text-4xl tracking-[0.5em] outline-none focus:ring-2 focus:ring-amber-500" placeholder="0000" />
-        <button id="join" class="mt-4 w-full rounded-2xl bg-amber-500 py-6 disabled:opacity-40 text-2xl font-black text-black active:bg-amber-400">ALĂTURĂ-TE SESIUNII</button>
+    <!-- Role picker: shown until this device has a role -->
+    <div id="rolePicker" class="fixed inset-0 z-40 hidden flex-col items-center justify-center gap-8 overflow-auto bg-black p-6">
+      <div class="text-center">
+        <h1 class="text-3xl font-black tracking-tight lg:text-5xl">Band Metronome</h1>
+        <p class="mt-2 text-neutral-400 lg:text-lg">Cine ești?</p>
       </div>
-      <button id="create" class="w-full rounded-2xl disabled:opacity-40 bg-neutral-900 py-4 text-lg font-bold ring-1 ring-neutral-700 active:bg-neutral-800">Creează sesiune (Master)</button>
-      <p id="startStatus" class="min-h-[1.5rem] text-center text-amber-400"></p>
-      <p id="startError" class="hidden text-center text-red-400"></p>
-      <p id="version" class="text-center font-mono text-xs text-neutral-600"></p>
-    </main>
+      <div id="roleGrid" class="grid w-full max-w-md grid-cols-2 gap-3 lg:max-w-3xl lg:grid-cols-5"></div>
+    </div>
 
-    <!-- Resume screen: after a refresh one tap is needed to unlock audio -->
-    <main id="resume" class="mx-auto hidden min-h-dvh max-w-md flex-col justify-center gap-6 p-6 text-center">
-      <p id="resumeRole" class="text-lg text-neutral-400"></p>
-      <p class="font-mono text-6xl font-black tracking-[0.3em] text-amber-400" id="resumeCode"></p>
-      <button id="resumeGo" class="w-full rounded-2xl bg-amber-500 py-8 text-2xl font-black text-black active:bg-amber-400 disabled:opacity-40">CONTINUĂ</button>
-      <p id="resumeStatus" class="min-h-[1.5rem] text-amber-400"></p>
-      <p id="resumeError" class="hidden text-red-400"></p>
-      <button id="resumeExit" class="text-neutral-500 underline">Ieși din sesiune</button>
-    </main>
+    <!-- Mobile top bar -->
+    <header class="sticky top-0 z-20 flex items-center gap-3 border-b border-neutral-900 bg-black/90 px-4 py-3 backdrop-blur lg:hidden">
+      <button id="menuBtn" class="-ml-1 rounded-lg px-2 py-1 text-2xl leading-none" aria-label="Meniu">☰</button>
+      <span id="topTitle" class="font-bold">Sesiune</span>
+      <span id="topSession" class="ml-auto font-mono text-sm text-amber-400"></span>
+    </header>
 
-    <!-- Session screen -->
-    <main id="session" class="mx-auto hidden max-w-md flex-col gap-4 p-4 pb-10">
-      <header class="flex items-center justify-between text-sm">
-        <div><span id="role" class="font-bold"></span> · cod <span id="sessionCode" class="font-mono text-lg font-bold text-amber-400"></span></div>
-        <div class="flex items-center gap-3">
-          <span id="connState" class="text-neutral-400"></span>
-          <button id="exit" class="rounded-lg bg-neutral-900 px-3 py-1 text-neutral-300 ring-1 ring-neutral-700">Ieși</button>
+    <div class="lg:flex">
+      <!-- Sidebar: fixed on laptop, drawer on phone -->
+      <aside id="sidebar" class="fixed inset-y-0 left-0 z-30 flex w-72 -translate-x-full flex-col gap-6 overflow-auto border-r border-neutral-900 bg-neutral-950 p-5 transition-transform duration-200 lg:sticky lg:top-0 lg:h-dvh lg:w-64 lg:translate-x-0">
+        <div class="text-xl font-black tracking-tight">Band Metronome</div>
+
+        <button id="roleCard" class="flex items-center gap-3 rounded-2xl bg-neutral-900 p-3 text-left ring-1 ring-neutral-800">
+          <span id="roleIcon" class="text-3xl"></span>
+          <span class="min-w-0">
+            <span id="roleLabel" class="block truncate font-bold"></span>
+            <span class="block text-xs text-neutral-500">schimbă rolul</span>
+          </span>
+        </button>
+
+        <nav id="nav" class="flex flex-col gap-1">
+          <button data-view="session" class="navBtn">🎚️ <span>Sesiune</span></button>
+          <button data-view="songs" class="navBtn">🎼 <span>Piese</span></button>
+          <button data-view="setlist" class="navBtn">📋 <span>Setlist</span></button>
+          <button data-view="settings" class="navBtn">⚙️ <span>Setări</span></button>
+        </nav>
+
+        <div id="sessionBox" class="hidden flex-col gap-1 rounded-2xl bg-neutral-900 p-3 text-sm ring-1 ring-neutral-800">
+          <div class="text-neutral-500"><span id="sbRole"></span> · cod</div>
+          <div id="sbCode" class="font-mono text-3xl font-black tracking-widest text-amber-400"></div>
+          <div id="connState" class="text-neutral-400"></div>
+          <button id="exit" class="mt-2 rounded-lg bg-neutral-800 py-2 font-bold text-neutral-300">Ieși din sesiune</button>
         </div>
-      </header>
 
-      <section id="songHeader" class="hidden flex-col items-center text-center">
-        <div id="songTitle" class="text-xl font-black"></div>
-        <div id="songArtist" class="text-sm text-neutral-500"></div>
-      </section>
-
-      <div id="cueBanner" class="hidden rounded-2xl bg-amber-500 px-4 py-3 text-center text-lg font-black text-black"></div>
-
-      <section id="flash" class="flex aspect-square flex-col items-center justify-center rounded-3xl bg-neutral-950 px-4 text-center ring-1 ring-neutral-800 transition-colors duration-150">
-        <div id="sectionLabel" class="line-clamp-2 text-3xl font-black uppercase text-amber-400"></div>
-        <div id="beatNum" class="font-mono text-[9rem] leading-none font-black text-neutral-700">–</div>
-        <div id="barNum" class="mt-2 text-2xl font-bold text-neutral-300"></div>
-        <div id="songBarNum" class="font-mono text-sm text-neutral-500"></div>
-        <div id="tempoInfo" class="mt-1 font-mono text-neutral-500"></div>
-      </section>
-
-      <div id="syncInfo" class="text-center font-mono text-xs text-neutral-500"></div>
-
-      <!-- Master controls -->
-      <section id="masterPanel" class="hidden flex-col gap-3 rounded-2xl bg-neutral-950 p-4 ring-1 ring-neutral-800">
-        <div class="grid grid-cols-2 gap-2">
-          <button data-mode="free" class="modeBtn rounded-xl py-3 font-bold">Liber</button>
-          <button data-mode="songs" class="modeBtn rounded-xl py-3 font-bold">Piese</button>
+        <div class="mt-auto space-y-1 text-xs text-neutral-600">
+          <div id="storeState"></div>
+          <div id="version" class="font-mono"></div>
         </div>
-        <div id="freePanel" class="flex flex-col gap-3">
-          <div class="flex items-center justify-between gap-2">
-            <button data-bpm="-5" class="bpmBtn h-14 w-14 rounded-xl bg-neutral-900 text-lg font-bold">−5</button>
-            <button data-bpm="-1" class="bpmBtn h-14 w-14 rounded-xl bg-neutral-900 text-lg font-bold">−1</button>
-            <div class="text-center"><div id="bpm" class="font-mono text-5xl font-black">120</div><div class="text-xs text-neutral-500">BPM</div></div>
-            <button data-bpm="1" class="bpmBtn h-14 w-14 rounded-xl bg-neutral-900 text-lg font-bold">+1</button>
-            <button data-bpm="5" class="bpmBtn h-14 w-14 rounded-xl bg-neutral-900 text-lg font-bold">+5</button>
+      </aside>
+      <div id="scrim" class="fixed inset-0 z-20 hidden bg-black/60 lg:hidden"></div>
+
+      <main class="min-w-0 flex-1 p-4 pb-16 lg:p-8">
+        <!-- ===== Session ===== -->
+        <section id="view-session" class="view hidden flex-col gap-4">
+          <!-- Not in a session -->
+          <div id="lobby" class="hidden">
+          <div class="mx-auto flex w-full max-w-4xl flex-col gap-4 lg:grid lg:grid-cols-2">
+            <div class="flex flex-col gap-4 rounded-3xl bg-neutral-950 p-6 ring-1 ring-neutral-800">
+              <h2 class="text-xl font-black">Intră în sesiune</h2>
+              <p class="text-sm text-neutral-400">Codul de 4 cifre e pe ecranul celui care a pornit sesiunea.</p>
+              <input id="code" inputmode="numeric" maxlength="4" pattern="[0-9]*" class="w-full rounded-xl bg-neutral-900 px-4 py-4 text-center font-mono text-4xl tracking-[0.5em] outline-none focus:ring-2 focus:ring-amber-500" placeholder="0000" />
+              <button id="join" class="w-full rounded-2xl bg-amber-500 py-6 text-2xl font-black text-black active:bg-amber-400 disabled:opacity-40">ALĂTURĂ-TE SESIUNII</button>
+            </div>
+            <div class="flex flex-col gap-4 rounded-3xl bg-neutral-950 p-6 ring-1 ring-neutral-800">
+              <h2 class="text-xl font-black">Pornește o sesiune</h2>
+              <p class="text-sm text-neutral-400">Devii Master: tu pornești metronomul, alegi piesele și tempo-ul. Ceilalți intră cu codul tău.</p>
+              <button id="create" class="mt-auto w-full rounded-2xl bg-neutral-900 py-6 text-xl font-black ring-1 ring-neutral-700 active:bg-neutral-800 disabled:opacity-40">Creează sesiune (Master)</button>
+            </div>
+            <p id="startStatus" class="min-h-[1.5rem] text-center text-amber-400 lg:col-span-2"></p>
+            <p id="startError" class="hidden text-center text-red-400 lg:col-span-2"></p>
           </div>
-          <label class="flex items-center justify-between">
-            <span class="text-neutral-400">Măsură</span>
-            <select id="meter" class="rounded-xl bg-neutral-900 px-4 py-3 text-lg"></select>
-          </label>
-        </div>
-        <div id="songPanel" class="hidden flex-col gap-3">
-          <div id="currentSong" class="rounded-xl bg-neutral-900 p-3 text-center text-neutral-400">Alege o piesă din setlist sau bibliotecă</div>
-          <label class="flex items-center justify-between">
-            <span class="text-neutral-400">Pornește de la măsura</span>
-            <input id="fromBar" type="number" inputmode="numeric" min="1" value="1" class="w-24 rounded-xl bg-neutral-900 px-3 py-2 text-center text-lg" />
-          </label>
-          <div class="grid grid-cols-2 gap-2">
-            <button id="prevSong" class="rounded-xl bg-neutral-900 py-3 font-bold">◀ Anterioara</button>
-            <button id="nextSong" class="rounded-xl bg-neutral-900 py-3 font-bold">Următoarea ▶</button>
           </div>
-        </div>
-        <button id="startStop" class="w-full rounded-2xl bg-green-600 py-6 text-2xl font-black active:bg-green-500">START</button>
-        <details class="text-sm">
-          <summary class="cursor-pointer text-neutral-400">Membri conectați: <span id="memberCount">0</span> · cod QR</summary>
-          <ul id="members" class="mt-2 space-y-1 font-mono text-xs text-neutral-400"></ul>
-          <canvas id="qr" class="mx-auto mt-3 rounded-xl bg-white p-2"></canvas>
-          <p id="joinUrl" class="mt-2 break-all text-center text-xs text-neutral-500"></p>
-        </details>
-      </section>
 
-      <!-- Setlist and library (master, songs mode) -->
-      <section id="libraryPanel" class="hidden flex-col gap-3 rounded-2xl bg-neutral-950 p-4 ring-1 ring-neutral-800">
-        <h2 class="text-sm font-bold uppercase tracking-wider text-neutral-500">Setlist</h2>
-        <ol id="setlist" class="flex flex-col gap-2"></ol>
-        <p id="setlistEmpty" class="text-sm text-neutral-500">Gol. Adaugă piese din bibliotecă cu „+ Setlist”.</p>
-        <h2 class="mt-2 text-sm font-bold uppercase tracking-wider text-neutral-500">Bibliotecă</h2>
-        <div class="flex gap-2">
-          <input id="songSearch" placeholder="Caută titlu sau artist" class="min-w-0 flex-1 rounded-xl bg-neutral-900 px-3 py-2" />
-          <button id="newSong" class="rounded-xl bg-amber-500 px-3 py-2 font-bold text-black">+ Nouă</button>
-        </div>
-        <ul id="songList" class="flex flex-col gap-2"></ul>
-      </section>
+          <!-- After a refresh: one tap to unlock audio -->
+          <div id="resume" class="mx-auto hidden w-full max-w-md flex-col gap-6 py-10 text-center">
+            <p id="resumeRole" class="text-lg text-neutral-400"></p>
+            <p id="resumeCode" class="font-mono text-6xl font-black tracking-[0.3em] text-amber-400"></p>
+            <button id="resumeGo" class="w-full rounded-2xl bg-amber-500 py-8 text-2xl font-black text-black active:bg-amber-400 disabled:opacity-40">CONTINUĂ</button>
+            <p id="resumeStatus" class="min-h-[1.5rem] text-amber-400"></p>
+            <p id="resumeError" class="hidden text-red-400"></p>
+            <button id="resumeExit" class="text-neutral-500 underline">Ieși din sesiune</button>
+          </div>
 
-      <!-- Personal mix -->
-      <section class="flex flex-col gap-4 rounded-2xl bg-neutral-950 p-4 ring-1 ring-neutral-800">
-        <h2 class="text-sm font-bold uppercase tracking-wider text-neutral-500">Mixul meu</h2>
-        <label class="flex items-center justify-between gap-3">
-          <span class="text-neutral-400">Sunet</span>
-          <select id="sound" class="rounded-xl bg-neutral-900 px-4 py-3 text-lg"></select>
-        </label>
-        <label class="flex items-center gap-3">
-          <span class="text-neutral-400">Volum</span>
-          <input id="volume" type="range" min="0" max="1" step="0.01" class="w-full accent-amber-500" />
-        </label>
-        <div>
-          <span class="text-neutral-400">Subdiviziune</span>
-          <div id="subdivisions" class="mt-2 grid grid-cols-4 gap-2"></div>
-        </div>
-        <div>
-          <div class="flex items-center justify-between">
-            <span class="text-neutral-400">Latență căști</span>
-            <span class="font-mono text-2xl font-bold"><span id="latency">0</span> ms</span>
+          <!-- In a session -->
+          <div id="live" class="hidden">
+          <div class="flex w-full flex-col gap-4 lg:grid lg:grid-cols-[minmax(0,1fr)_380px] lg:items-start lg:gap-6">
+            <div class="flex flex-col gap-4">
+              <div id="songHeader" class="hidden flex-col items-center text-center">
+                <div id="songTitle" class="text-xl font-black lg:text-3xl"></div>
+                <div id="songArtist" class="text-sm text-neutral-500 lg:text-base"></div>
+              </div>
+              <div id="cueBanner" class="hidden rounded-2xl bg-amber-500 px-4 py-3 text-center text-lg font-black text-black lg:text-2xl"></div>
+              <div id="flash" class="flex aspect-square flex-col items-center justify-center rounded-3xl bg-neutral-950 px-4 text-center ring-1 ring-neutral-800 lg:aspect-[16/10]">
+                <div id="sectionLabel" class="line-clamp-2 text-3xl font-black uppercase text-amber-400 lg:text-5xl"></div>
+                <div id="beatNum" class="font-mono text-[9rem] leading-none font-black text-neutral-700 lg:text-[14rem]">–</div>
+                <div id="barNum" class="mt-2 text-2xl font-bold text-neutral-300 lg:text-4xl"></div>
+                <div id="songBarNum" class="font-mono text-sm text-neutral-500 lg:text-lg"></div>
+                <div id="tempoInfo" class="mt-1 font-mono text-neutral-500 lg:text-xl"></div>
+              </div>
+              <div id="syncInfo" class="text-center font-mono text-xs text-neutral-500"></div>
+            </div>
+
+            <div class="flex flex-col gap-4">
+              <!-- Master controls -->
+              <div id="masterPanel" class="hidden flex-col gap-3 rounded-2xl bg-neutral-950 p-4 ring-1 ring-neutral-800">
+                <div class="grid grid-cols-2 gap-2">
+                  <button data-mode="free" class="modeBtn rounded-xl py-3 font-bold">Liber</button>
+                  <button data-mode="songs" class="modeBtn rounded-xl py-3 font-bold">Piese</button>
+                </div>
+                <div id="freePanel" class="flex flex-col gap-3">
+                  <div class="flex items-center justify-between gap-2">
+                    <button data-bpm="-5" class="bpmBtn h-14 w-14 rounded-xl bg-neutral-900 text-lg font-bold">−5</button>
+                    <button data-bpm="-1" class="bpmBtn h-14 w-14 rounded-xl bg-neutral-900 text-lg font-bold">−1</button>
+                    <div class="text-center"><div id="bpm" class="font-mono text-5xl font-black">120</div><div class="text-xs text-neutral-500">BPM</div></div>
+                    <button data-bpm="1" class="bpmBtn h-14 w-14 rounded-xl bg-neutral-900 text-lg font-bold">+1</button>
+                    <button data-bpm="5" class="bpmBtn h-14 w-14 rounded-xl bg-neutral-900 text-lg font-bold">+5</button>
+                  </div>
+                  <label class="flex items-center justify-between">
+                    <span class="text-neutral-400">Măsură</span>
+                    <select id="meter" class="rounded-xl bg-neutral-900 px-4 py-3 text-lg"></select>
+                  </label>
+                </div>
+                <div id="songPanel" class="hidden flex-col gap-3">
+                  <div id="currentSong" class="rounded-xl bg-neutral-900 p-3 text-center text-neutral-400"></div>
+                  <label class="flex items-center justify-between">
+                    <span class="text-neutral-400">Pornește de la măsura</span>
+                    <input id="fromBar" type="number" inputmode="numeric" min="1" value="1" class="w-24 rounded-xl bg-neutral-900 px-3 py-2 text-center text-lg" />
+                  </label>
+                  <div class="grid grid-cols-2 gap-2">
+                    <button id="prevSong" class="rounded-xl bg-neutral-900 py-3 font-bold">◀ Anterioara</button>
+                    <button id="nextSong" class="rounded-xl bg-neutral-900 py-3 font-bold">Următoarea ▶</button>
+                  </div>
+                  <ol id="liveSetlist" class="flex max-h-72 flex-col gap-1 overflow-auto"></ol>
+                </div>
+                <button id="startStop" class="w-full rounded-2xl bg-green-600 py-6 text-2xl font-black active:bg-green-500">START</button>
+                <details class="text-sm">
+                  <summary class="cursor-pointer text-neutral-400">Membri conectați: <span id="memberCount">0</span> · cod QR</summary>
+                  <ul id="members" class="mt-2 space-y-1 text-xs text-neutral-400"></ul>
+                  <canvas id="qr" class="mx-auto mt-3 rounded-xl bg-white p-2"></canvas>
+                  <p id="joinUrl" class="mt-2 break-all text-center text-xs text-neutral-500"></p>
+                </details>
+              </div>
+
+              <!-- Quick personal mix -->
+              <div class="flex flex-col gap-4 rounded-2xl bg-neutral-950 p-4 ring-1 ring-neutral-800">
+                <h2 class="text-sm font-bold uppercase tracking-wider text-neutral-500">Mixul meu</h2>
+                <label class="flex items-center justify-between gap-3">
+                  <span class="text-neutral-400">Sunet</span>
+                  <select id="sound" class="rounded-xl bg-neutral-900 px-4 py-3 text-lg"></select>
+                </label>
+                <label class="flex items-center gap-3">
+                  <span class="text-neutral-400">Volum</span>
+                  <input id="volume" type="range" min="0" max="1" step="0.01" class="w-full accent-amber-500" />
+                </label>
+                <div>
+                  <span class="text-neutral-400">Subdiviziune</span>
+                  <div id="subdivisions" class="mt-2 grid grid-cols-4 gap-2"></div>
+                </div>
+              </div>
+            </div>
           </div>
-          <div class="mt-2 grid grid-cols-4 gap-2">
-            <button data-lat="-10" class="latBtn rounded-xl bg-neutral-900 py-3 font-bold">−10</button>
-            <button data-lat="-1" class="latBtn rounded-xl bg-neutral-900 py-3 font-bold">−1</button>
-            <button data-lat="1" class="latBtn rounded-xl bg-neutral-900 py-3 font-bold">+1</button>
-            <button data-lat="10" class="latBtn rounded-xl bg-neutral-900 py-3 font-bold">+10</button>
           </div>
-          <button id="calibrate" class="mt-2 w-full rounded-xl bg-neutral-900 py-3 font-bold ring-1 ring-neutral-700">Calibrare prin atingere</button>
-          <p class="mt-2 text-xs leading-relaxed text-neutral-500">
-            Reglaj fin: un telefon din sesiune rămâne <b>fără Bluetooth</b> (sună pe difuzor, latență 0). Ascultă cu o cască
-            și difuzorul în același timp și ajustează până când cele două clicuri se aud ca unul singur.
-          </p>
-        </div>
-      </section>
-    </main>
+        </section>
+
+        <!-- ===== Songs ===== -->
+        <section id="view-songs" class="view mx-auto hidden w-full max-w-5xl flex-col gap-4">
+          <div class="flex flex-wrap items-center gap-3">
+            <h1 class="text-2xl font-black lg:text-3xl">Piese</h1>
+            <input id="songSearch" placeholder="Caută titlu sau artist" class="order-last w-full rounded-xl bg-neutral-900 px-4 py-3 lg:order-none lg:ml-auto lg:w-80" />
+            <button id="newSong" class="ml-auto rounded-xl bg-amber-500 px-4 py-3 font-bold text-black lg:ml-0">+ Piesă nouă</button>
+          </div>
+          <ul id="songList" class="grid gap-3 lg:grid-cols-2 xl:grid-cols-3"></ul>
+        </section>
+
+        <!-- ===== Setlist ===== -->
+        <section id="view-setlist" class="view mx-auto hidden w-full max-w-3xl flex-col gap-4">
+          <h1 class="text-2xl font-black lg:text-3xl">Setlist</h1>
+          <p class="text-sm text-neutral-500">Ordinea pieselor pentru repetiție sau concert. Se adaugă din pagina „Piese”.</p>
+          <ol id="setlist" class="flex flex-col gap-2"></ol>
+          <p id="setlistEmpty" class="text-neutral-500">Gol. Adaugă piese din pagina „Piese” cu „+ Setlist”.</p>
+        </section>
+
+        <!-- ===== Settings ===== -->
+        <section id="view-settings" class="view mx-auto hidden w-full max-w-2xl flex-col gap-4">
+          <h1 class="text-2xl font-black lg:text-3xl">Setări</h1>
+          <div class="flex flex-col gap-3 rounded-2xl bg-neutral-950 p-4 ring-1 ring-neutral-800">
+            <h2 class="text-sm font-bold uppercase tracking-wider text-neutral-500">Rolul meu</h2>
+            <div id="settingsRoles" class="grid grid-cols-2 gap-2 sm:grid-cols-5"></div>
+          </div>
+          <div class="flex flex-col gap-3 rounded-2xl bg-neutral-950 p-4 ring-1 ring-neutral-800">
+            <div class="flex items-center justify-between">
+              <h2 class="text-sm font-bold uppercase tracking-wider text-neutral-500">Latență căști Bluetooth</h2>
+              <span class="font-mono text-2xl font-bold"><span id="latency">0</span> ms</span>
+            </div>
+            <div class="grid grid-cols-4 gap-2">
+              <button data-lat="-10" class="latBtn rounded-xl bg-neutral-900 py-3 font-bold">−10</button>
+              <button data-lat="-1" class="latBtn rounded-xl bg-neutral-900 py-3 font-bold">−1</button>
+              <button data-lat="1" class="latBtn rounded-xl bg-neutral-900 py-3 font-bold">+1</button>
+              <button data-lat="10" class="latBtn rounded-xl bg-neutral-900 py-3 font-bold">+10</button>
+            </div>
+            <button id="calibrate" class="w-full rounded-xl bg-neutral-900 py-3 font-bold ring-1 ring-neutral-700">Calibrare prin atingere</button>
+            <p class="text-xs leading-relaxed text-neutral-500">
+              Reglaj fin: un telefon din sesiune rămâne <b>fără Bluetooth</b> (sună pe difuzor, latență 0). Ascultă cu o cască
+              și difuzorul în același timp și ajustează până când cele două clicuri se aud ca unul singur.
+              Pentru calibrare trebuie să fii într-o sesiune (sau să fi pornit una), ca sunetul să fie deblocat.
+            </p>
+          </div>
+        </section>
+      </main>
+    </div>
 
     <!-- Tap calibration overlay -->
-    <div id="calOverlay" class="fixed inset-0 z-10 hidden flex-col items-center justify-center gap-6 bg-black p-6 text-center">
+    <div id="calOverlay" class="fixed inset-0 z-40 hidden flex-col items-center justify-center gap-6 bg-black p-6 text-center">
       <p class="text-lg text-neutral-300">Ascultă clicul din căști și atinge ecranul exact pe el.</p>
       <div id="calPad" class="flex aspect-square w-full max-w-sm items-center justify-center rounded-full bg-neutral-900 text-6xl font-black ring-4 ring-neutral-700 active:bg-amber-600">
         <span id="calCount">0</span>
@@ -165,11 +233,13 @@
     </div>
 
     <!-- Song editor -->
-    <div id="editor" class="fixed inset-0 z-10 hidden overflow-auto bg-black p-4">
-      <div class="mx-auto flex w-full max-w-md flex-col gap-3 pb-10">
-        <h2 class="text-xl font-black">Piesă</h2>
-        <input id="edTitle" placeholder="Titlu" class="rounded-xl bg-neutral-900 px-3 py-3 text-lg" />
-        <input id="edArtist" placeholder="Artist" class="rounded-xl bg-neutral-900 px-3 py-3" />
+    <div id="editor" class="fixed inset-0 z-40 hidden overflow-auto bg-black p-4 lg:p-8">
+      <div class="mx-auto flex w-full max-w-3xl flex-col gap-3 pb-10">
+        <h2 class="text-2xl font-black">Piesă</h2>
+        <div class="grid gap-3 lg:grid-cols-2">
+          <input id="edTitle" placeholder="Titlu" class="rounded-xl bg-neutral-900 px-3 py-3 text-lg" />
+          <input id="edArtist" placeholder="Artist" class="rounded-xl bg-neutral-900 px-3 py-3 text-lg" />
+        </div>
         <div class="grid grid-cols-2 gap-3">
           <label class="text-sm text-neutral-400">Măsuri în total
             <input id="edBars" type="number" inputmode="numeric" min="1" class="mt-1 w-full rounded-xl bg-neutral-900 px-3 py-2 text-lg text-neutral-100" />
@@ -182,7 +252,7 @@
         <p class="text-xs leading-relaxed text-neutral-500">
           Fiecare rând se aplică de la măsura lui. Câmpurile goale păstrează valoarea anterioară.
           „Treptat” = accelerando/ritardando de la schimbarea de tempo anterioară până la această măsură.
-          La măsuri în optimi (7/8) BPM-ul numără optimile.
+          La măsuri în optimi (7/8) BPM-ul numără optimile. Instrucțiunea o văd toți, sau doar rolurile bifate.
         </p>
         <div id="edMarkers" class="flex flex-col gap-3"></div>
         <button id="edAddMarker" class="rounded-xl bg-neutral-900 py-3 font-bold ring-1 ring-neutral-700">+ Adaugă schimbare</button>
@@ -194,7 +264,7 @@
       </div>
     </div>
 
-    <pre id="errors" class="fixed inset-x-0 bottom-0 z-20 hidden max-h-40 overflow-auto whitespace-pre-wrap bg-red-950/95 p-3 font-mono text-xs text-red-200"></pre>
+    <pre id="errors" class="fixed inset-x-0 bottom-0 z-50 hidden max-h-40 overflow-auto whitespace-pre-wrap bg-red-950/95 p-3 font-mono text-xs text-red-200"></pre>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

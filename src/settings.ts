@@ -1,8 +1,10 @@
 import type { SoundKind } from './audio/sounds';
+import type { Role } from './roles';
 import type { Subdivision } from './timeline';
 
 export interface Settings {
-  name: string;
+  /** This device's member: chosen once on the role picker. */
+  role: Role | null;
   sound: SoundKind;
   volume: number;
   subdivision: Subdivision;
@@ -15,7 +17,7 @@ export interface Settings {
 
 const KEY = 'bandmetro.settings.v1';
 
-const DEFAULTS: Settings = { name: '', sound: 'click', volume: 0.8, subdivision: 1, latencyMs: 0, masterMode: 'free', lastSongId: null };
+const DEFAULTS: Settings = { role: null, sound: 'click', volume: 0.8, subdivision: 1, latencyMs: 0, masterMode: 'free', lastSongId: null };
 
 export function loadSettings(): Settings {
   try {

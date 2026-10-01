@@ -1,1 +1,16 @@
 @import "tailwindcss";
+
+@layer components {
+  .navBtn {
+    @apply flex items-center gap-3 rounded-xl px-3 py-3 text-left text-lg font-bold text-neutral-400 hover:bg-neutral-900;
+  }
+  .navBtn.active {
+    @apply bg-amber-500/15 text-amber-400;
+  }
+  .chip {
+    @apply rounded-lg bg-neutral-900 px-2 py-1 text-xs font-bold text-neutral-500 ring-1 ring-neutral-800;
+  }
+  .chip.on {
+    @apply bg-amber-500 text-black ring-amber-500;
+  }
+}

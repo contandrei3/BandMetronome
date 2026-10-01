@@ -1,3 +1,5 @@
+import type { Role } from './roles';
+
 /**
  * Transport state shared by the master with every member. All times are in
  * master-clock milliseconds; every device derives the click grid from this
@@ -48,6 +50,8 @@ export interface Cue {
   beatUnit?: number;
   /** The tempo is reached gradually, ending at this bar. */
   ramp?: boolean;
+  /** Who the text is for; empty or missing = everyone. */
+  roles?: Role[];
 }
 
 export interface Transport {

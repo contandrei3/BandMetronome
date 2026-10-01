@@ -1,22 +1,22 @@
 import './style.css';
 import QRCode from 'qrcode';
-import { IDENTITY_TIME, MetronomeEngine } from './audio/engine';
+import { IDENTITY_TIME, MetronomeEngine, type TimeSource } from './audio/engine';
 import { SOUND_LABELS, type SoundKind } from './audio/sounds';
 import { analyzeTaps, CALIBRATION_PERIOD_MS, CALIBRATION_TAPS } from './calibration';
+import { firebaseConfig } from './firebaseConfig';
 import { clearMaster, loadMaster, saveMaster } from './masterState';
 import { ClientSession, MasterSession, type ConnState } from './net/session';
+import { cueIsFor, roleInfo, ROLES, type Role } from './roles';
 import { parseRoute, routeHash, type Route } from './route';
 import { loadSettings, saveSettings } from './settings';
 import { describeChange, songPosition, songTransport, type Song } from './song';
 import { LocalLibraryStore, type Library, type LibraryStore } from './store';
-import { openEditor, parseMeter } from './ui/editor';
-import { renderLibrary } from './ui/library';
 import {
   beatAt,
   bpmAt,
   changeTransport,
-  isFinished,
   idleTransport,
+  isFinished,
   lastSegment,
   segmentAt,
   startTransport,
@@ -25,6 +25,8 @@ import {
   type Subdivision,
   type Transport,
 } from './timeline';
+import { openEditor, parseMeter } from './ui/editor';
+import { renderLiveSetlist, renderSetlist, renderSongList, type LibraryHandlers } from './ui/library';
 import { keepScreenOn } from './wakeLock';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -38,18 +40,12 @@ const START_LEAD_MS = 1200;
 const CHANGE_LEAD_MS = 600;
 
 const settings = loadSettings();
-let engine: MetronomeEngine;
+let engine: MetronomeEngine | null = null;
 let master: MasterSession | null = null;
 let client: ClientSession | null = null;
 /** Transport as known locally; for a member it is only applied once the clock is locked. */
 let transport: Transport = idleTransport();
 let transportApplied = false;
-
-// ---------- Start / resume ----------
-
-const nameInput = $<HTMLInputElement>('name');
-const codeInput = $<HTMLInputElement>('code');
-nameInput.value = settings.name;
 
 $('version').textContent = `versiune ${__BUILD__}`;
 
@@ -62,10 +58,175 @@ const reportError = (msg: string) => {
 window.addEventListener('error', (e) => reportError(e.message));
 window.addEventListener('unhandledrejection', (e) => reportError(String(e.reason?.message ?? e.reason)));
 
+// ---------- Navigation ----------
+
+type View = 'session' | 'songs' | 'setlist' | 'settings';
+const VIEW_TITLES: Record<View, string> = { session: 'Sesiune', songs: 'Piese', setlist: 'Setlist', settings: 'Setări' };
+const VIEW_KEY = 'bandmetro.view';
+
+function setView(v: View) {
+  for (const el of document.querySelectorAll<HTMLElement>('.view')) show(el, el.id === `view-${v}`);
+  for (const b of document.querySelectorAll<HTMLElement>('.navBtn')) b.classList.toggle('active', b.dataset.view === v);
+  $('topTitle').textContent = VIEW_TITLES[v];
+  try {
+    sessionStorage.setItem(VIEW_KEY, v);
+  } catch {
+    // Only a convenience.
+  }
+  setDrawer(false);
+}
+
+function setDrawer(open: boolean) {
+  $('sidebar').classList.toggle('-translate-x-full', !open);
+  $('sidebar').classList.toggle('translate-x-0', open);
+  $('scrim').classList.toggle('hidden', !open);
+}
+
+for (const b of document.querySelectorAll<HTMLElement>('.navBtn')) b.addEventListener('click', () => setView(b.dataset.view as View));
+$('menuBtn').addEventListener('click', () => setDrawer(true));
+$('scrim').addEventListener('click', () => setDrawer(false));
+
+// ---------- Role ----------
+
+function renderRole() {
+  const r = roleInfo(settings.role);
+  $('roleIcon').textContent = r?.icon ?? '❔';
+  $('roleLabel').textContent = r?.label ?? 'Alege rolul';
+  for (const b of document.querySelectorAll<HTMLElement>('[data-pick-role]')) {
+    const on = b.dataset.pickRole === settings.role;
+    b.classList.toggle('bg-amber-500', on);
+    b.classList.toggle('text-black', on);
+    b.classList.toggle('bg-neutral-900', !on);
+  }
+}
+
+function setRole(role: Role) {
+  settings.role = role;
+  saveSettings(settings);
+  show($('rolePicker'), false);
+  renderRole();
+  lastBeat = -1; // redraw role-specific instructions
+}
+
+function roleButton(r: (typeof ROLES)[number], big: boolean): HTMLButtonElement {
+  const b = document.createElement('button');
+  b.dataset.pickRole = r.id;
+  b.className = big
+    ? 'flex flex-col items-center gap-2 rounded-3xl bg-neutral-900 p-6 text-lg font-bold ring-1 ring-neutral-800 active:bg-amber-500 active:text-black'
+    : 'flex items-center justify-center gap-2 rounded-xl bg-neutral-900 px-3 py-3 font-bold';
+  b.innerHTML = `<span class="${big ? 'text-5xl' : 'text-xl'}">${r.icon}</span><span>${r.label}</span>`;
+  b.addEventListener('click', () => setRole(r.id));
+  return b;
+}
+
+for (const r of ROLES) {
+  $('roleGrid').append(roleButton(r, true));
+  $('settingsRoles').append(roleButton(r, false));
+}
+$('roleCard').addEventListener('click', () => show($('rolePicker')));
+if (!settings.role) show($('rolePicker'));
+renderRole();
+
+// ---------- Song library (Firebase or this device) ----------
+
+let store: LibraryStore = new LocalLibraryStore();
+let library: Library = { songs: [], setlist: [] };
+let currentSong: Song | null = null;
+let songQuery = '';
+let unsubscribe = store.subscribe(onLibrary);
+
+function onLibrary(lib: Library) {
+  library = lib;
+  // Keep the loaded song in step with edits made on other phones.
+  if (currentSong) currentSong = library.songs.find((s) => s.id === currentSong!.id) ?? currentSong;
+  renderSongs();
+}
+
+function setStoreState(text: string) {
+  $('storeState').textContent = text;
+}
+
+if (firebaseConfig) {
+  setStoreState('☁️ Firebase: conectare…');
+  import('./firebaseStore')
+    .then(({ createFirebaseStore }) => createFirebaseStore(firebaseConfig!))
+    .then((cloud) => {
+      unsubscribe();
+      store = cloud;
+      unsubscribe = store.subscribe(onLibrary);
+      setStoreState('☁️ Piese sincronizate (Firebase)');
+    })
+    .catch((e) => {
+      setStoreState('💾 Piese doar pe acest dispozitiv');
+      reportError(`Firebase: ${e?.code ?? e?.message ?? e}`);
+    });
+} else {
+  setStoreState('💾 Piese doar pe acest dispozitiv');
+}
+
+$('newSong').addEventListener('click', () => openEditor(null, editorHandlers));
+$<HTMLInputElement>('songSearch').addEventListener('input', (e) => {
+  songQuery = (e.target as HTMLInputElement).value;
+  renderSongs();
+});
+
+const editorHandlers = {
+  onSave(song: Song) {
+    store.saveSong(song).catch((e) => reportError(`Salvare: ${e?.message ?? e}`));
+    if (master && currentSong?.id === song.id && !transport.running) selectSong(song);
+  },
+  onDelete(id: string) {
+    store.deleteSong(id).catch((e) => reportError(`Ștergere: ${e?.message ?? e}`));
+    if (currentSong?.id === id) currentSong = null;
+  },
+};
+
+function updateSetlist(ids: string[]) {
+  store.saveSetlist(ids).catch((e) => reportError(`Setlist: ${e?.message ?? e}`));
+}
+
+function renderSongs() {
+  const h: LibraryHandlers = {
+    load: master
+      ? (song) => {
+          if (mode !== 'songs') setMode('songs');
+          selectSong(song);
+          setView('session');
+        }
+      : undefined,
+    edit: (song) => openEditor(song, editorHandlers),
+    addToSetlist: (id) => updateSetlist([...library.setlist, id]),
+    removeFromSetlist: (i) => updateSetlist(library.setlist.filter((_, j) => j !== i)),
+    move: (i, d) => {
+      const ids = [...library.setlist];
+      const j = i + d;
+      if (j < 0 || j >= ids.length) return;
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+      updateSetlist(ids);
+    },
+  };
+  const id = currentSong?.id ?? null;
+  renderSongList(library, songQuery, id, h);
+  renderSetlist(library, id, h);
+  if (master) {
+    renderLiveSetlist(library, id, selectSong);
+    const cs = $('currentSong');
+    cs.textContent = currentSong
+      ? `${currentSong.title}${currentSong.artist ? ' — ' + currentSong.artist : ''}`
+      : 'Alege o piesă din setlist (mai jos) sau din pagina „Piese”';
+    cs.classList.toggle('text-neutral-400', !currentSong);
+    cs.classList.toggle('font-bold', !!currentSong);
+    renderMasterState();
+  }
+}
+
+// ---------- Session start / resume ----------
+
+const codeInput = $<HTMLInputElement>('code');
 const initialRoute = parseRoute(location.hash, location.search);
+
 if (initialRoute) {
   // A refresh inside a session: same session, one tap to unlock audio.
-  show($('start'), false);
   show($('resume'));
   $('resumeRole').textContent = initialRoute.role === 'master' ? 'Sesiunea ta (Master)' : 'Intri în sesiunea';
   $('resumeCode').textContent = initialRoute.code;
@@ -73,9 +234,18 @@ if (initialRoute) {
     if (initialRoute.role === 'master') void startMaster(initialRoute.code);
     else void startMember(initialRoute.code);
   });
-  $('resumeExit').addEventListener('click', exitSession);
+  setView('session');
+} else {
+  show($('lobby'));
+  let saved: string | null = null;
+  try {
+    saved = sessionStorage.getItem(VIEW_KEY);
+  } catch {
+    // Default view.
+  }
+  setView((saved as View | null) ?? 'session');
 }
-
+$('resumeExit').addEventListener('click', exitSession);
 $('create').addEventListener('click', () => void startMaster());
 $('join').addEventListener('click', () => {
   const code = codeInput.value.trim();
@@ -101,33 +271,32 @@ function setBusy(label: string | null) {
 
 function exitSession() {
   clearMaster();
-  location.hash = '';
+  history.replaceState(null, '', location.pathname);
   location.reload();
 }
 
-let booted = false;
-async function boot(): Promise<void> {
-  if (nameInput.value.trim()) settings.name = nameInput.value.trim();
-  saveSettings(settings);
-  if (booted) return;
-  booted = true;
-  engine = new MetronomeEngine();
-  await engine.start();
-  engine.sound = settings.sound;
-  engine.volume = settings.volume;
-  engine.subdivision = settings.subdivision;
-  engine.latencyMs = settings.latencyMs;
+/** Creates the audio engine; must run inside a tap (browser autoplay rules). */
+async function boot(): Promise<MetronomeEngine> {
+  if (engine) return engine;
+  const e = new MetronomeEngine();
+  engine = e;
+  await e.start();
+  e.sound = settings.sound;
+  e.volume = settings.volume;
+  e.subdivision = settings.subdivision;
+  e.latencyMs = settings.latencyMs;
   keepScreenOn();
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') void engine.resume();
+    if (document.visibilityState === 'visible') void e.resume();
   });
+  return e;
 }
 
 /** `preferred` is the code from the URL after a refresh; the master tries to keep it. */
 async function startMaster(preferred?: string) {
   try {
     setBusy('Pornesc sunetul…');
-    await boot();
+    const e = await boot();
     setBusy(preferred ? `Recuperez sesiunea ${preferred}…` : 'Mă conectez la serverul de sesiuni…');
     master = new MasterSession(transport);
     master.onState = setConnState;
@@ -139,64 +308,70 @@ async function startMaster(preferred?: string) {
     if (restored) transport = restored;
     master.setTransport(transport);
     saveMaster(code, transport);
-    engine.setTimeSource(IDENTITY_TIME);
-    engine.setTransport(transport);
+    e.setTimeSource(IDENTITY_TIME);
+    e.setTransport(transport);
     transportApplied = true;
     enterSession({ role: 'master', code });
     show($('masterPanel'));
-    renderMasterControls();
+    initMasterControls();
     if (preferred && code !== preferred) reportError(`Codul ${preferred} era ocupat; sesiunea nouă are codul ${code}.`);
     const url = `${location.origin}${location.pathname}${routeHash({ role: 'join', code })}`;
     $('joinUrl').textContent = url;
     void QRCode.toCanvas($('qr'), url, { width: 220, margin: 1 });
-  } catch (e) {
+  } catch (err) {
     setBusy(null);
     master = null;
-    startError(`Nu s-a putut crea sesiunea (${(e as { type?: string }).type ?? e}). Verifică internetul și mai încearcă.`);
+    startError(`Nu s-a putut crea sesiunea (${(err as { type?: string }).type ?? err}). Verifică internetul și mai încearcă.`);
   }
+}
+
+function memberTime(c: ClientSession): TimeSource {
+  return { masterToLocal: (m) => m - c.sync.offset, localToMaster: (l) => l + c.sync.offset };
 }
 
 async function startMember(code: string) {
   setBusy('Pornesc sunetul…');
-  await boot();
+  const e = await boot();
   setBusy(null);
   const c = new ClientSession(code);
   client = c;
   c.onState = setConnState;
-  c.getStatus = () => ({ name: settings.name || 'anonim', latencyMs: settings.latencyMs });
+  c.getStatus = () => {
+    const r = roleInfo(settings.role);
+    return { name: r ? `${r.icon} ${r.label}` : 'fără rol', latencyMs: settings.latencyMs };
+  };
   c.onTransport = (t) => {
     transport = t;
-    if (transportApplied) engine.setTransport(t);
+    if (transportApplied) e.setTransport(t);
   };
   // The master's clock restarted: stay silent until it is locked again (see frame()).
   c.onMasterRestart = () => {
     transportApplied = false;
-    engine.setTransport(null);
+    e.setTransport(null);
   };
-  engine.setTimeSource({
-    masterToLocal: (m) => m - c.sync.offset,
-    localToMaster: (l) => l + c.sync.offset,
-  });
+  e.setTimeSource(memberTime(c));
   c.open();
   enterSession({ role: 'join', code });
 }
 
 function enterSession(route: Route) {
-  show($('start'), false);
+  show($('lobby'), false);
   show($('resume'), false);
-  show($('session'));
-  $('role').textContent = route.role === 'master' ? 'Master' : 'Membru';
-  $('sessionCode').textContent = route.code;
+  show($('live'));
+  show($('sessionBox'));
+  const label = route.role === 'master' ? 'Master' : 'Membru';
+  $('sbRole').textContent = label;
+  $('sbCode').textContent = route.code;
+  $('topSession').textContent = `${label} · ${route.code}`;
   history.replaceState(null, '', location.pathname + routeHash(route));
-  renderPersonal();
-  requestAnimationFrame(frame);
+  renderSongs();
 }
 
 function setConnState(s: ConnState, detail?: string) {
   const labels: Record<ConnState, string> = {
     connecting: '⏳ conectare…',
     connected: '🟢 conectat',
-    reconnecting: '🟠 reconectare…',
+    reconnecting: `🟠 reconectare… ${detail ?? ''}`,
     error: `🔴 eroare ${detail ?? ''}`,
   };
   $('connState').textContent = labels[s];
@@ -210,13 +385,9 @@ const METERS = ['1/4', '2/4', '3/4', '4/4', '5/4', '6/4', '7/4', '5/8', '6/8', '
 let pendingChange: number | undefined;
 
 type Mode = 'free' | 'songs';
-const store: LibraryStore = new LocalLibraryStore();
-let library: Library = { songs: [], setlist: [] };
-let currentSong: Song | null = null;
 let mode: Mode = 'free';
-let songQuery = '';
 
-function renderMasterControls() {
+function initMasterControls() {
   const sel = $<HTMLSelectElement>('meter');
   for (const m of METERS) sel.add(new Option(m, m));
   sel.addEventListener('change', () => updateMasterTransport(parseMeter(sel.value)));
@@ -228,7 +399,6 @@ function renderMasterControls() {
       updateMasterTransport({ bpm });
     });
   }
-
   for (const b of document.querySelectorAll<HTMLButtonElement>('.modeBtn')) {
     b.addEventListener('click', () => setMode(b.dataset.mode as Mode));
   }
@@ -244,19 +414,10 @@ function renderMasterControls() {
   });
   $('prevSong').addEventListener('click', () => stepSetlist(-1));
   $('nextSong').addEventListener('click', () => stepSetlist(1));
-  $('newSong').addEventListener('click', () => openEditor(null, editorHandlers));
-  $<HTMLInputElement>('songSearch').addEventListener('input', (e) => {
-    songQuery = (e.target as HTMLInputElement).value;
-    renderSongs();
-  });
 
   // A refreshed master comes back in the mode it was in, with the same song loaded.
-  void store.load().then((lib) => {
-    library = lib;
-    const id = transport.song ? settings.lastSongId : null;
-    currentSong = library.songs.find((s) => s.id === id) ?? null;
-    setMode(transport.song ? 'songs' : settings.masterMode, true);
-  });
+  if (transport.song) currentSong = library.songs.find((s) => s.id === settings.lastSongId) ?? null;
+  setMode(transport.song ? 'songs' : settings.masterMode, true);
 }
 
 function setMode(m: Mode, restoring = false) {
@@ -269,7 +430,6 @@ function setMode(m: Mode, restoring = false) {
   }
   show($('freePanel'), m === 'free');
   show($('songPanel'), m === 'songs');
-  show($('libraryPanel'), m === 'songs');
   if (!restoring) {
     // Switching mode stops the click and shows the band what is loaded now.
     if (m === 'free') publish(changeTransport({ ...transport, running: false }, 0, 0, {}));
@@ -277,7 +437,6 @@ function setMode(m: Mode, restoring = false) {
     else if (transport.running) publish(stopTransport(transport));
   }
   renderSongs();
-  renderMasterState();
 }
 
 /** Loads a song (stopped) so the band sees what comes next; START plays it. */
@@ -297,52 +456,6 @@ function stepSetlist(delta: number) {
   const next = i < 0 ? (delta > 0 ? 0 : ids.length - 1) : i + delta;
   if (next < 0 || next >= ids.length) return;
   selectSong(library.songs.find((s) => s.id === ids[next])!);
-}
-
-const editorHandlers = {
-  onSave(song: Song) {
-    void store.saveSong(song);
-    const i = library.songs.findIndex((s) => s.id === song.id);
-    if (i >= 0) library.songs[i] = song;
-    else library.songs.push(song);
-    if (currentSong?.id === song.id || !currentSong) selectSong(song);
-    renderSongs();
-  },
-  onDelete(id: string) {
-    void store.deleteSong(id);
-    library = { songs: library.songs.filter((s) => s.id !== id), setlist: library.setlist.filter((x) => x !== id) };
-    if (currentSong?.id === id) currentSong = null;
-    renderSongs();
-  },
-};
-
-function updateSetlist(ids: string[]) {
-  library.setlist = ids;
-  void store.saveSetlist(ids);
-  renderSongs();
-}
-
-function renderSongs() {
-  if (!master) return;
-  renderLibrary(library, songQuery, currentSong?.id ?? null, {
-    select: selectSong,
-    edit: (song) => openEditor(song, editorHandlers),
-    addToSetlist: (id) => updateSetlist([...library.setlist, id]),
-    removeFromSetlist: (i) => updateSetlist(library.setlist.filter((_, j) => j !== i)),
-    move: (i, d) => {
-      const ids = [...library.setlist];
-      const j = i + d;
-      if (j < 0 || j >= ids.length) return;
-      [ids[i], ids[j]] = [ids[j], ids[i]];
-      updateSetlist(ids);
-    },
-  });
-  const cs = $('currentSong');
-  cs.textContent = currentSong
-    ? `${currentSong.title}${currentSong.artist ? ' — ' + currentSong.artist : ''}`
-    : 'Alege o piesă din setlist sau bibliotecă';
-  cs.classList.toggle('text-neutral-400', !currentSong);
-  cs.classList.toggle('font-bold', !!currentSong);
 }
 
 /**
@@ -370,7 +483,7 @@ function flushPending() {
 
 function publish(t: Transport) {
   transport = t;
-  engine.setTransport(t);
+  engine?.setTransport(t);
   if (master) {
     master.setTransport(t);
     saveMaster(master.code, t);
@@ -379,6 +492,7 @@ function publish(t: Transport) {
 }
 
 function renderMasterState() {
+  if (!master) return;
   const seg = { ...lastSegment(transport), ...pendingPatch };
   $('bpm').textContent = String(seg.bpm);
   $<HTMLSelectElement>('meter').value = `${seg.beatsPerBar}/${seg.beatUnit ?? 4}`;
@@ -399,20 +513,23 @@ function renderMembers() {
   $('members').innerHTML = '';
   for (const m of master.members.values()) {
     const li = document.createElement('li');
-    li.textContent = `${m.name.padEnd(12)} rtt ${fmt(m.minRtt)} ms · ±${fmt(m.jitter / 2)} ms · lat ${m.latencyMs} ms`;
+    li.className = 'flex justify-between gap-2';
+    li.innerHTML = '<span class="truncate font-bold text-neutral-300"></span><span class="font-mono"></span>';
+    (li.children[0] as HTMLElement).textContent = m.name;
+    (li.children[1] as HTMLElement).textContent = `±${fmt(m.jitter / 2)} ms · BT ${m.latencyMs} ms`;
     $('members').append(li);
   }
 }
 
-// ---------- Personal mix ----------
+// ---------- Personal mix & latency ----------
 
-function renderPersonal() {
+function initPersonal() {
   const sound = $<HTMLSelectElement>('sound');
   for (const [k, label] of Object.entries(SOUND_LABELS)) sound.add(new Option(label, k));
   sound.value = settings.sound;
   sound.addEventListener('change', () => {
     settings.sound = sound.value as SoundKind;
-    engine.sound = settings.sound;
+    if (engine) engine.sound = settings.sound;
     saveSettings(settings);
   });
 
@@ -420,7 +537,7 @@ function renderPersonal() {
   vol.value = String(settings.volume);
   vol.addEventListener('input', () => {
     settings.volume = Number(vol.value);
-    engine.volume = settings.volume;
+    if (engine) engine.volume = settings.volume;
     saveSettings(settings);
   });
 
@@ -438,7 +555,7 @@ function renderPersonal() {
     b.textContent = label;
     b.addEventListener('click', () => {
       settings.subdivision = n;
-      engine.subdivision = n;
+      if (engine) engine.subdivision = n;
       saveSettings(settings);
       paint();
     });
@@ -450,12 +567,13 @@ function renderPersonal() {
     b.addEventListener('click', () => setLatency(settings.latencyMs + Number(b.dataset.lat)));
   }
   setLatency(settings.latencyMs);
-  $('calibrate').addEventListener('click', startCalibration);
+  $('calibrate').addEventListener('click', () => void startCalibration());
 }
+initPersonal();
 
 function setLatency(ms: number) {
   settings.latencyMs = Math.max(0, Math.min(1000, Math.round(ms)));
-  engine.latencyMs = settings.latencyMs;
+  if (engine) engine.latencyMs = settings.latencyMs;
   $('latency').textContent = String(settings.latencyMs);
   saveSettings(settings);
 }
@@ -464,18 +582,19 @@ function setLatency(ms: number) {
 
 let calResult: number | null = null;
 
-function startCalibration() {
+async function startCalibration() {
+  const e = await boot(); // works outside a session too
   const overlay = $('calOverlay');
   show(overlay);
-  const savedSub = engine.subdivision;
+  const savedSub = e.subdivision;
   // Play locally, uncompensated, at a fixed slow tempo.
   const t0 = performance.now() + 1000;
   const taps: number[] = [];
   calResult = null;
-  engine.setTimeSource(IDENTITY_TIME);
-  engine.latencyMs = 0;
-  engine.subdivision = 1;
-  engine.setTransport({
+  e.setTimeSource(IDENTITY_TIME);
+  e.latencyMs = 0;
+  e.subdivision = 1;
+  e.setTransport({
     running: true,
     rev: -1,
     segments: [{ t: t0, beat: 0, bar: 0, bpm: 60000 / CALIBRATION_PERIOD_MS, beatsPerBar: 4 }],
@@ -485,9 +604,9 @@ function startCalibration() {
   $<HTMLButtonElement>('calApply').disabled = true;
 
   const pad = $('calPad');
-  const onTap = (e: PointerEvent) => {
-    e.preventDefault();
-    taps.push(e.timeStamp);
+  const onTap = (ev: PointerEvent) => {
+    ev.preventDefault();
+    taps.push(ev.timeStamp);
     $('calCount').textContent = String(taps.length);
     if (taps.length >= CALIBRATION_TAPS) {
       const r = analyzeTaps(taps, t0);
@@ -507,15 +626,10 @@ function startCalibration() {
 
   const calibrationEnd = (close: boolean) => {
     pad.removeEventListener('pointerdown', onTap);
-    engine.subdivision = savedSub;
-    engine.latencyMs = settings.latencyMs;
-    if (client) {
-      const c = client;
-      engine.setTimeSource({ masterToLocal: (m) => m - c.sync.offset, localToMaster: (l) => l + c.sync.offset });
-    } else {
-      engine.setTimeSource(IDENTITY_TIME);
-    }
-    engine.setTransport(transportApplied ? transport : null);
+    e.subdivision = savedSub;
+    e.latencyMs = settings.latencyMs;
+    e.setTimeSource(client ? memberTime(client) : IDENTITY_TIME);
+    e.setTransport(transportApplied ? transport : null);
     if (close) show(overlay, false);
   };
   $('calCancel').onclick = () => calibrationEnd(true);
@@ -528,9 +642,11 @@ function startCalibration() {
 // ---------- Visuals ----------
 
 let lastBeat = -1;
+const flash = $('flash');
 
 function frame() {
   requestAnimationFrame(frame);
+  if (!engine || (!master && !client)) return;
 
   if (client && !transportApplied && client.sync.locked && client.transport) {
     transportApplied = true;
@@ -548,7 +664,7 @@ function frame() {
 
   const b = calibrating || !transportApplied ? null : beatAt(transport, now);
   const song = transport.song;
-  const pos = b && song ? songPosition(song, b.bar) : null;
+  const pos = b && song ? songPosition(song, b.bar, settings.role) : null;
   const preRoll = !!pos && pos.barsToNext === 1;
 
   show($('songHeader'), !!song);
@@ -574,9 +690,8 @@ function frame() {
       $('barNum').textContent = pos.countIn ? '' : `Măsura ${pos.barInSection} din ${pos.sectionBars}`;
       $('songBarNum').textContent = pos.countIn ? `de la măsura ${pos.songBar}` : `${pos.songBar} / ${song.bars}`;
       const next = pos.next;
-      $('cueBanner').textContent = next
-        ? `URMEAZĂ: ${[next.text, describeChange(next)].filter(Boolean).join(' · ')}`
-        : '';
+      const text = next && cueIsFor(next.roles, settings.role) ? next.text : undefined;
+      $('cueBanner').textContent = next ? `URMEAZĂ: ${[text, describeChange(next)].filter(Boolean).join(' · ')}` : '';
       show($('cueBanner'), preRoll && !!next);
     } else {
       $('sectionLabel').textContent = '';
@@ -587,7 +702,7 @@ function frame() {
     // Beat 1 amber, others grey; during the bar before a change every beat flashes red.
     const accent = b.beatInBar === 0;
     flash.style.transition = 'none';
-    flash.style.backgroundColor = preRoll ? (accent ? '#f59e0b' : '#dc2626') : accent ? '#f59e0b' : '#525252';
+    flash.style.backgroundColor = accent ? '#f59e0b' : preRoll ? '#dc2626' : '#525252';
     $('beatNum').style.color = accent ? '#000' : '#fff';
     requestAnimationFrame(() => {
       flash.style.transition = 'background-color 180ms ease-out';
@@ -605,8 +720,7 @@ function frame() {
       : `sincronizare ceas… (${s.samples})`;
   }
 }
-
-const flash = $('flash');
+requestAnimationFrame(frame);
 
 function fmt(n: number): string {
   return Number.isFinite(n) ? n.toFixed(1) : '–';
