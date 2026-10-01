@@ -27,11 +27,24 @@
       <p id="version" class="text-center font-mono text-xs text-neutral-600"></p>
     </main>
 
+    <!-- Resume screen: after a refresh one tap is needed to unlock audio -->
+    <main id="resume" class="mx-auto hidden min-h-dvh max-w-md flex-col justify-center gap-6 p-6 text-center">
+      <p id="resumeRole" class="text-lg text-neutral-400"></p>
+      <p class="font-mono text-6xl font-black tracking-[0.3em] text-amber-400" id="resumeCode"></p>
+      <button id="resumeGo" class="w-full rounded-2xl bg-amber-500 py-8 text-2xl font-black text-black active:bg-amber-400 disabled:opacity-40">CONTINUĂ</button>
+      <p id="resumeStatus" class="min-h-[1.5rem] text-amber-400"></p>
+      <p id="resumeError" class="hidden text-red-400"></p>
+      <button id="resumeExit" class="text-neutral-500 underline">Ieși din sesiune</button>
+    </main>
+
     <!-- Session screen -->
     <main id="session" class="mx-auto hidden max-w-md flex-col gap-4 p-4 pb-10">
       <header class="flex items-center justify-between text-sm">
         <div><span id="role" class="font-bold"></span> · cod <span id="sessionCode" class="font-mono text-lg font-bold text-amber-400"></span></div>
-        <div id="connState" class="text-neutral-400"></div>
+        <div class="flex items-center gap-3">
+          <span id="connState" class="text-neutral-400"></span>
+          <button id="exit" class="rounded-lg bg-neutral-900 px-3 py-1 text-neutral-300 ring-1 ring-neutral-700">Ieși</button>
+        </div>
       </header>
 
       <section id="flash" class="flex aspect-square flex-col items-center justify-center rounded-3xl bg-neutral-950 ring-1 ring-neutral-800 transition-colors duration-150">

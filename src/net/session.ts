@@ -6,8 +6,8 @@ const ID_PREFIX = 'bandmetro-v1-';
 
 export type Message =
   | { t: 'ping'; id: number; c0: number }
-  | { t: 'pong'; id: number; c0: number; m: number }
-  | { t: 'state'; transport: Transport }
+  | { t: 'pong'; id: number; c0: number; m: number; epoch: string }
+  | { t: 'state'; transport: Transport; epoch: string }
   | { t: 'status'; name: string; minRtt: number; jitter: number; latencyMs: number };
 
 export interface MemberStatus {
@@ -41,8 +41,19 @@ export function randomCode(): string {
   return String(Math.floor(1000 + Math.random() * 9000));
 }
 
+/** A member reconnects when the master has been silent this long. */
+const SILENCE_MS = 4000;
+
+/** How long a reloaded master keeps trying to get its previous code back. */
+const RECLAIM_MS = 30000;
+
 /** Master: owns the clock and the transport, answers pings, broadcasts state. */
 export class MasterSession {
+  /**
+   * Identifies this page load. The master clock (performance.now()) restarts
+   * on reload, so members must drop their clock estimate when this changes.
+   */
+  readonly epoch = Math.random().toString(36).slice(2);
   private peer: Peer | null = null;
   private conns = new Map<string, DataConnection>();
   readonly members = new Map<string, MemberStatus>();
@@ -52,8 +63,14 @@ export class MasterSession {
 
   constructor(private transport: Transport) {}
 
-  /** Resolves with the 4-digit code once the signaling server has accepted it. */
-  open(code = randomCode(), attempts = 5): Promise<string> {
+  /**
+   * Resolves with the 4-digit code once the signaling server has accepted it.
+   * With `preferred` (after a reload) the same code is retried for a while,
+   * since the server may still hold it for the previous page.
+   */
+  open(preferred?: string, attempts = 5): Promise<string> {
+    const code = preferred ?? randomCode();
+    const deadline = preferred ? performance.now() + RECLAIM_MS : 0;
     return new Promise((resolve, reject) => {
       const peer = new Peer(ID_PREFIX + code, peerOptions());
       const timeout = setTimeout(() => {
@@ -72,7 +89,10 @@ export class MasterSession {
         if (err.type === 'unavailable-id' && !this.peer) {
           clearTimeout(timeout);
           peer.destroy();
-          if (attempts > 1) this.open(randomCode(), attempts - 1).then(resolve, reject);
+          if (preferred && performance.now() < deadline) {
+            this.onState('reconnecting', `recuperez codul ${code}`);
+            setTimeout(() => this.reclaim(code, deadline, attempts).then(resolve, reject), 2000);
+          } else if (attempts > 1) this.open(undefined, attempts - 1).then(resolve, reject);
           else reject(err);
           return;
         }
@@ -92,20 +112,29 @@ export class MasterSession {
     });
   }
 
+  private reclaim(code: string, deadline: number, attempts: number): Promise<string> {
+    if (performance.now() >= deadline) return this.open(undefined, attempts - 1);
+    return this.open(code, attempts);
+  }
+
   setTransport(t: Transport): void {
     this.transport = t;
-    for (const c of this.conns.values()) if (c.open) c.send({ t: 'state', transport: t } satisfies Message);
+    for (const c of this.conns.values()) if (c.open) c.send(this.stateMessage());
+  }
+
+  private stateMessage(): Message {
+    return { t: 'state', transport: this.transport, epoch: this.epoch };
   }
 
   private accept(conn: DataConnection): void {
     conn.on('open', () => {
       this.conns.set(conn.peer, conn);
-      conn.send({ t: 'state', transport: this.transport } satisfies Message);
+      conn.send(this.stateMessage());
     });
     conn.on('data', (raw) => {
       const msg = raw as Message;
       if (msg.t === 'ping') {
-        conn.send({ t: 'pong', id: msg.id, c0: msg.c0, m: performance.now() } satisfies Message);
+        conn.send({ t: 'pong', id: msg.id, c0: msg.c0, m: performance.now(), epoch: this.epoch } satisfies Message);
       } else if (msg.t === 'status') {
         this.members.set(conn.peer, { peer: conn.peer, ...msg, lastSeen: performance.now() });
         this.onMembersChange();
@@ -130,8 +159,12 @@ export class ClientSession {
   private statusTimer: number | undefined;
   private pingId = 0;
   private closed = false;
+  private epoch: string | null = null;
+  private lastHeard = 0;
   transport: Transport | null = null;
   onTransport: (t: Transport) => void = () => {};
+  /** The master page was reloaded: its clock restarted and sync starts over. */
+  onMasterRestart: () => void = () => {};
   onState: (s: ConnState, detail?: string) => void = () => {};
   getStatus: () => { name: string; latencyMs: number } = () => ({ name: '', latencyMs: 0 });
 
@@ -188,6 +221,13 @@ export class ClientSession {
   }
 
   private handle(msg: Message): void {
+    this.lastHeard = performance.now();
+    if ('epoch' in msg && msg.epoch !== this.epoch) {
+      const restarted = this.epoch !== null;
+      this.epoch = msg.epoch;
+      this.sync.reset();
+      if (restarted) this.onMasterRestart();
+    }
     if (msg.t === 'pong') {
       this.sync.addSample(msg.c0, msg.m, performance.now());
     } else if (msg.t === 'state') {
@@ -199,7 +239,16 @@ export class ClientSession {
   private startTimers(): void {
     this.stopTimers();
     // Ping fast until locked, then settle to 2 Hz to track drift.
+    this.lastHeard = performance.now();
     const ping = () => {
+      // A reloaded master leaves the old channel open-looking for a long time; treat silence as a drop.
+      if (performance.now() - this.lastHeard > SILENCE_MS) {
+        const dead = this.conn;
+        this.conn = null;
+        dead?.close();
+        this.scheduleReconnect();
+        return;
+      }
       if (this.conn?.open) this.conn.send({ t: 'ping', id: ++this.pingId, c0: performance.now() } satisfies Message);
       this.pingTimer = window.setTimeout(ping, this.sync.locked ? 500 : 100);
     };

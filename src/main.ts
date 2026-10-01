@@ -3,7 +3,9 @@ import QRCode from 'qrcode';
 import { IDENTITY_TIME, MetronomeEngine } from './audio/engine';
 import { SOUND_LABELS, type SoundKind } from './audio/sounds';
 import { analyzeTaps, CALIBRATION_PERIOD_MS, CALIBRATION_TAPS } from './calibration';
+import { clearMaster, loadMaster, saveMaster } from './masterState';
 import { ClientSession, MasterSession, type ConnState } from './net/session';
+import { parseRoute, routeHash, type Route } from './route';
 import { loadSettings, saveSettings } from './settings';
 import {
   beatAt,
@@ -37,27 +39,13 @@ let client: ClientSession | null = null;
 let transport: Transport = idleTransport();
 let transportApplied = false;
 
-// ---------- Start screen ----------
+// ---------- Start / resume ----------
 
 const nameInput = $<HTMLInputElement>('name');
 const codeInput = $<HTMLInputElement>('code');
 nameInput.value = settings.name;
-codeInput.value = new URLSearchParams(location.search).get('join') ?? '';
 
 $('version').textContent = `versiune ${__BUILD__}`;
-
-function startError(msg: string) {
-  const el = $('startError');
-  el.textContent = msg;
-  el.classList.toggle('hidden', !msg);
-}
-
-/** Shows progress on the start screen and blocks double taps while connecting. */
-function setBusy(label: string | null) {
-  for (const id of ['create', 'join']) $<HTMLButtonElement>(id).disabled = label !== null;
-  $('startStatus').textContent = label ?? '';
-  if (label) startError('');
-}
 
 // Any unexpected error is shown on screen: there is no console on a phone at rehearsal.
 const reportError = (msg: string) => {
@@ -68,9 +56,52 @@ const reportError = (msg: string) => {
 window.addEventListener('error', (e) => reportError(e.message));
 window.addEventListener('unhandledrejection', (e) => reportError(String(e.reason?.message ?? e.reason)));
 
+const initialRoute = parseRoute(location.hash, location.search);
+if (initialRoute) {
+  // A refresh inside a session: same session, one tap to unlock audio.
+  show($('start'), false);
+  show($('resume'));
+  $('resumeRole').textContent = initialRoute.role === 'master' ? 'Sesiunea ta (Master)' : 'Intri în sesiunea';
+  $('resumeCode').textContent = initialRoute.code;
+  $('resumeGo').addEventListener('click', () => {
+    if (initialRoute.role === 'master') void startMaster(initialRoute.code);
+    else void startMember(initialRoute.code);
+  });
+  $('resumeExit').addEventListener('click', exitSession);
+}
+
+$('create').addEventListener('click', () => void startMaster());
+$('join').addEventListener('click', () => {
+  const code = codeInput.value.trim();
+  if (!/^\d{4}$/.test(code)) return startError('Introdu codul de 4 cifre al sesiunii.');
+  void startMember(code);
+});
+$('exit').addEventListener('click', exitSession);
+
+function startError(msg: string) {
+  for (const id of ['startError', 'resumeError']) {
+    $(id).textContent = msg;
+    $(id).classList.toggle('hidden', !msg);
+  }
+}
+
+/** Shows progress and blocks double taps while connecting. */
+function setBusy(label: string | null) {
+  for (const id of ['create', 'join', 'resumeGo']) $<HTMLButtonElement>(id).disabled = label !== null;
+  $('startStatus').textContent = label ?? '';
+  $('resumeStatus').textContent = label ?? '';
+  if (label) startError('');
+}
+
+function exitSession() {
+  clearMaster();
+  location.hash = '';
+  location.reload();
+}
+
 let booted = false;
 async function boot(): Promise<void> {
-  settings.name = nameInput.value.trim();
+  if (nameInput.value.trim()) settings.name = nameInput.value.trim();
   saveSettings(settings);
   if (booted) return;
   booted = true;
@@ -86,23 +117,30 @@ async function boot(): Promise<void> {
   });
 }
 
-$('create').addEventListener('click', async () => {
+/** `preferred` is the code from the URL after a refresh; the master tries to keep it. */
+async function startMaster(preferred?: string) {
   try {
     setBusy('Pornesc sunetul…');
     await boot();
-    setBusy('Mă conectez la serverul de sesiuni…');
+    setBusy(preferred ? `Recuperez sesiunea ${preferred}…` : 'Mă conectez la serverul de sesiuni…');
     master = new MasterSession(transport);
     master.onState = setConnState;
     master.onMembersChange = renderMembers;
-    const code = await master.open();
+    const code = await master.open(preferred);
     setBusy(null);
+    // Carry on where the page left off (same tempo, and in time if it was playing).
+    const restored = loadMaster(code);
+    if (restored) transport = restored;
+    master.setTransport(transport);
+    saveMaster(code, transport);
     engine.setTimeSource(IDENTITY_TIME);
     engine.setTransport(transport);
     transportApplied = true;
-    enterSession('Master', code);
+    enterSession({ role: 'master', code });
     show($('masterPanel'));
     renderMasterControls();
-    const url = `${location.origin}${location.pathname}?join=${code}`;
+    if (preferred && code !== preferred) reportError(`Codul ${preferred} era ocupat; sesiunea nouă are codul ${code}.`);
+    const url = `${location.origin}${location.pathname}${routeHash({ role: 'join', code })}`;
     $('joinUrl').textContent = url;
     void QRCode.toCanvas($('qr'), url, { width: 220, margin: 1 });
   } catch (e) {
@@ -110,11 +148,9 @@ $('create').addEventListener('click', async () => {
     master = null;
     startError(`Nu s-a putut crea sesiunea (${(e as { type?: string }).type ?? e}). Verifică internetul și mai încearcă.`);
   }
-});
+}
 
-$('join').addEventListener('click', async () => {
-  const code = codeInput.value.trim();
-  if (!/^\d{4}$/.test(code)) return startError('Introdu codul de 4 cifre al sesiunii.');
+async function startMember(code: string) {
   setBusy('Pornesc sunetul…');
   await boot();
   setBusy(null);
@@ -126,20 +162,26 @@ $('join').addEventListener('click', async () => {
     transport = t;
     if (transportApplied) engine.setTransport(t);
   };
+  // The master's clock restarted: stay silent until it is locked again (see frame()).
+  c.onMasterRestart = () => {
+    transportApplied = false;
+    engine.setTransport(null);
+  };
   engine.setTimeSource({
     masterToLocal: (m) => m - c.sync.offset,
     localToMaster: (l) => l + c.sync.offset,
   });
   c.open();
-  enterSession('Membru', code);
-});
+  enterSession({ role: 'join', code });
+}
 
-function enterSession(role: string, code: string) {
+function enterSession(route: Route) {
   show($('start'), false);
+  show($('resume'), false);
   show($('session'));
-  $('role').textContent = role;
-  $('sessionCode').textContent = code;
-  history.replaceState(null, '', location.pathname);
+  $('role').textContent = route.role === 'master' ? 'Master' : 'Membru';
+  $('sessionCode').textContent = route.code;
+  history.replaceState(null, '', location.pathname + routeHash(route));
   renderPersonal();
   requestAnimationFrame(frame);
 }
@@ -207,7 +249,10 @@ function flushPending() {
 function publish(t: Transport) {
   transport = t;
   engine.setTransport(t);
-  master?.setTransport(t);
+  if (master) {
+    master.setTransport(t);
+    saveMaster(master.code, t);
+  }
   renderMasterState();
 }
 
