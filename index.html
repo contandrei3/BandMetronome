@@ -19,10 +19,12 @@
       <div class="rounded-2xl bg-neutral-950 p-4 ring-1 ring-neutral-800">
         <span class="text-sm text-neutral-400">Cod sesiune</span>
         <input id="code" inputmode="numeric" maxlength="4" pattern="[0-9]*" class="mt-1 w-full rounded-xl bg-neutral-900 px-4 py-4 text-center font-mono text-4xl tracking-[0.5em] outline-none focus:ring-2 focus:ring-amber-500" placeholder="0000" />
-        <button id="join" class="mt-4 w-full rounded-2xl bg-amber-500 py-6 text-2xl font-black text-black active:bg-amber-400">ALĂTURĂ-TE SESIUNII</button>
+        <button id="join" class="mt-4 w-full rounded-2xl bg-amber-500 py-6 disabled:opacity-40 text-2xl font-black text-black active:bg-amber-400">ALĂTURĂ-TE SESIUNII</button>
       </div>
-      <button id="create" class="w-full rounded-2xl bg-neutral-900 py-4 text-lg font-bold ring-1 ring-neutral-700 active:bg-neutral-800">Creează sesiune (Master)</button>
+      <button id="create" class="w-full rounded-2xl disabled:opacity-40 bg-neutral-900 py-4 text-lg font-bold ring-1 ring-neutral-700 active:bg-neutral-800">Creează sesiune (Master)</button>
+      <p id="startStatus" class="min-h-[1.5rem] text-center text-amber-400"></p>
       <p id="startError" class="hidden text-center text-red-400"></p>
+      <p id="version" class="text-center font-mono text-xs text-neutral-600"></p>
     </main>
 
     <!-- Session screen -->
@@ -109,6 +111,8 @@
         <button id="calApply" class="flex-1 rounded-xl bg-amber-500 py-4 font-bold text-black disabled:opacity-30" disabled>Aplică</button>
       </div>
     </div>
+
+    <pre id="errors" class="fixed inset-x-0 bottom-0 z-20 hidden max-h-40 overflow-auto whitespace-pre-wrap bg-red-950/95 p-3 font-mono text-xs text-red-200"></pre>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

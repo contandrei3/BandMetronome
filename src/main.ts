@@ -44,15 +44,36 @@ const codeInput = $<HTMLInputElement>('code');
 nameInput.value = settings.name;
 codeInput.value = new URLSearchParams(location.search).get('join') ?? '';
 
+$('version').textContent = `versiune ${__BUILD__}`;
+
 function startError(msg: string) {
   const el = $('startError');
   el.textContent = msg;
-  el.classList.remove('hidden');
+  el.classList.toggle('hidden', !msg);
 }
 
+/** Shows progress on the start screen and blocks double taps while connecting. */
+function setBusy(label: string | null) {
+  for (const id of ['create', 'join']) $<HTMLButtonElement>(id).disabled = label !== null;
+  $('startStatus').textContent = label ?? '';
+  if (label) startError('');
+}
+
+// Any unexpected error is shown on screen: there is no console on a phone at rehearsal.
+const reportError = (msg: string) => {
+  const box = $('errors');
+  box.classList.remove('hidden');
+  box.textContent = `${box.textContent}\n${new Date().toLocaleTimeString()} ${msg}`.trim();
+};
+window.addEventListener('error', (e) => reportError(e.message));
+window.addEventListener('unhandledrejection', (e) => reportError(String(e.reason?.message ?? e.reason)));
+
+let booted = false;
 async function boot(): Promise<void> {
   settings.name = nameInput.value.trim();
   saveSettings(settings);
+  if (booted) return;
+  booted = true;
   engine = new MetronomeEngine();
   await engine.start();
   engine.sound = settings.sound;
@@ -67,11 +88,14 @@ async function boot(): Promise<void> {
 
 $('create').addEventListener('click', async () => {
   try {
+    setBusy('Pornesc sunetul…');
     await boot();
+    setBusy('Mă conectez la serverul de sesiuni…');
     master = new MasterSession(transport);
     master.onState = setConnState;
     master.onMembersChange = renderMembers;
     const code = await master.open();
+    setBusy(null);
     engine.setTimeSource(IDENTITY_TIME);
     engine.setTransport(transport);
     transportApplied = true;
@@ -82,14 +106,18 @@ $('create').addEventListener('click', async () => {
     $('joinUrl').textContent = url;
     void QRCode.toCanvas($('qr'), url, { width: 220, margin: 1 });
   } catch (e) {
-    startError(`Nu s-a putut crea sesiunea (${(e as { type?: string }).type ?? e}). Verifică internetul.`);
+    setBusy(null);
+    master = null;
+    startError(`Nu s-a putut crea sesiunea (${(e as { type?: string }).type ?? e}). Verifică internetul și mai încearcă.`);
   }
 });
 
 $('join').addEventListener('click', async () => {
   const code = codeInput.value.trim();
   if (!/^\d{4}$/.test(code)) return startError('Introdu codul de 4 cifre al sesiunii.');
+  setBusy('Pornesc sunetul…');
   await boot();
+  setBusy(null);
   const c = new ClientSession(code);
   client = c;
   c.onState = setConnState;

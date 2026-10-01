@@ -76,7 +76,8 @@ export class MetronomeEngine {
 
   /** Must be called from a user gesture (autoplay policy). */
   async start(): Promise<void> {
-    await this.ctx.resume();
+    // resume() can stay pending on some phones (e.g. audio device busy); never block the UI on it.
+    await Promise.race([this.ctx.resume(), new Promise((r) => setTimeout(r, 2000))]);
     this.startKeepAlive();
     this.clock.update();
     if (this.timer === undefined) this.timer = window.setInterval(() => this.tick(), TICK_INTERVAL_MS);

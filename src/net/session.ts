@@ -56,7 +56,13 @@ export class MasterSession {
   open(code = randomCode(), attempts = 5): Promise<string> {
     return new Promise((resolve, reject) => {
       const peer = new Peer(ID_PREFIX + code, peerOptions());
+      const timeout = setTimeout(() => {
+        if (this.peer) return;
+        peer.destroy();
+        reject({ type: 'serverul de sesiuni nu răspunde' });
+      }, 15000);
       peer.on('open', () => {
+        clearTimeout(timeout);
         this.peer = peer;
         this.code = code;
         this.onState('connected');
@@ -64,12 +70,17 @@ export class MasterSession {
       });
       peer.on('error', (err) => {
         if (err.type === 'unavailable-id' && !this.peer) {
+          clearTimeout(timeout);
           peer.destroy();
           if (attempts > 1) this.open(randomCode(), attempts - 1).then(resolve, reject);
           else reject(err);
           return;
         }
-        if (!this.peer) reject(err);
+        if (!this.peer) {
+          clearTimeout(timeout);
+          peer.destroy();
+          reject(err);
+        }
         else this.onState('error', err.type);
       });
       // Losing the signaling server does not drop existing data channels; just re-register.
