@@ -7,9 +7,15 @@ import { clearMaster, loadMaster, saveMaster } from './masterState';
 import { ClientSession, MasterSession, type ConnState } from './net/session';
 import { parseRoute, routeHash, type Route } from './route';
 import { loadSettings, saveSettings } from './settings';
+import { describeChange, songPosition, songTransport, type Song } from './song';
+import { LocalLibraryStore, type Library, type LibraryStore } from './store';
+import { openEditor, parseMeter } from './ui/editor';
+import { renderLibrary } from './ui/library';
 import {
   beatAt,
+  bpmAt,
   changeTransport,
+  isFinished,
   idleTransport,
   lastSegment,
   segmentAt,
@@ -200,13 +206,20 @@ function setConnState(s: ConnState, detail?: string) {
 
 const BPM_MIN = 30;
 const BPM_MAX = 300;
+const METERS = ['1/4', '2/4', '3/4', '4/4', '5/4', '6/4', '7/4', '5/8', '6/8', '7/8', '9/8', '11/8', '12/8', '15/8'];
 let pendingChange: number | undefined;
 
+type Mode = 'free' | 'songs';
+const store: LibraryStore = new LocalLibraryStore();
+let library: Library = { songs: [], setlist: [] };
+let currentSong: Song | null = null;
+let mode: Mode = 'free';
+let songQuery = '';
+
 function renderMasterControls() {
-  const sel = $<HTMLSelectElement>('beatsPerBar');
-  for (let n = 1; n <= 12; n++) sel.add(new Option(`${n}/4`, String(n)));
-  sel.value = String(lastSegment(transport).beatsPerBar);
-  sel.addEventListener('change', () => updateMasterTransport({ beatsPerBar: Number(sel.value) }));
+  const sel = $<HTMLSelectElement>('meter');
+  for (const m of METERS) sel.add(new Option(m, m));
+  sel.addEventListener('change', () => updateMasterTransport(parseMeter(sel.value)));
 
   for (const b of document.querySelectorAll<HTMLButtonElement>('.bpmBtn')) {
     b.addEventListener('click', () => {
@@ -216,18 +229,127 @@ function renderMasterControls() {
     });
   }
 
+  for (const b of document.querySelectorAll<HTMLButtonElement>('.modeBtn')) {
+    b.addEventListener('click', () => setMode(b.dataset.mode as Mode));
+  }
+
   $('startStop').addEventListener('click', () => {
     flushPending();
-    publish(transport.running ? stopTransport(transport) : startTransport(transport, performance.now() + START_LEAD_MS));
+    if (transport.running) return publish(stopTransport(transport));
+    const at = performance.now() + START_LEAD_MS;
+    if (mode === 'free') return publish(startTransport(transport, at));
+    if (!currentSong) return;
+    const from = Number($<HTMLInputElement>('fromBar').value) || 1;
+    publish(songTransport(currentSong, at, transport.rev + 1, from));
   });
+  $('prevSong').addEventListener('click', () => stepSetlist(-1));
+  $('nextSong').addEventListener('click', () => stepSetlist(1));
+  $('newSong').addEventListener('click', () => openEditor(null, editorHandlers));
+  $<HTMLInputElement>('songSearch').addEventListener('input', (e) => {
+    songQuery = (e.target as HTMLInputElement).value;
+    renderSongs();
+  });
+
+  // A refreshed master comes back in the mode it was in, with the same song loaded.
+  void store.load().then((lib) => {
+    library = lib;
+    const id = transport.song ? settings.lastSongId : null;
+    currentSong = library.songs.find((s) => s.id === id) ?? null;
+    setMode(transport.song ? 'songs' : settings.masterMode, true);
+  });
+}
+
+function setMode(m: Mode, restoring = false) {
+  mode = m;
+  settings.masterMode = m;
+  saveSettings(settings);
+  for (const b of document.querySelectorAll<HTMLButtonElement>('.modeBtn')) {
+    const on = b.dataset.mode === m;
+    b.className = `modeBtn rounded-xl py-3 font-bold ${on ? 'bg-amber-500 text-black' : 'bg-neutral-900'}`;
+  }
+  show($('freePanel'), m === 'free');
+  show($('songPanel'), m === 'songs');
+  show($('libraryPanel'), m === 'songs');
+  if (!restoring) {
+    // Switching mode stops the click and shows the band what is loaded now.
+    if (m === 'free') publish(changeTransport({ ...transport, running: false }, 0, 0, {}));
+    else if (currentSong) selectSong(currentSong);
+    else if (transport.running) publish(stopTransport(transport));
+  }
+  renderSongs();
   renderMasterState();
+}
+
+/** Loads a song (stopped) so the band sees what comes next; START plays it. */
+function selectSong(song: Song) {
+  currentSong = song;
+  settings.lastSongId = song.id;
+  saveSettings(settings);
+  $<HTMLInputElement>('fromBar').value = '1';
+  publish({ ...songTransport(song, 0, transport.rev + 1), running: false });
+  renderSongs();
+}
+
+function stepSetlist(delta: number) {
+  const ids = library.setlist.filter((id) => library.songs.some((s) => s.id === id));
+  if (ids.length === 0) return;
+  const i = currentSong ? ids.indexOf(currentSong.id) : -1;
+  const next = i < 0 ? (delta > 0 ? 0 : ids.length - 1) : i + delta;
+  if (next < 0 || next >= ids.length) return;
+  selectSong(library.songs.find((s) => s.id === ids[next])!);
+}
+
+const editorHandlers = {
+  onSave(song: Song) {
+    void store.saveSong(song);
+    const i = library.songs.findIndex((s) => s.id === song.id);
+    if (i >= 0) library.songs[i] = song;
+    else library.songs.push(song);
+    if (currentSong?.id === song.id || !currentSong) selectSong(song);
+    renderSongs();
+  },
+  onDelete(id: string) {
+    void store.deleteSong(id);
+    library = { songs: library.songs.filter((s) => s.id !== id), setlist: library.setlist.filter((x) => x !== id) };
+    if (currentSong?.id === id) currentSong = null;
+    renderSongs();
+  },
+};
+
+function updateSetlist(ids: string[]) {
+  library.setlist = ids;
+  void store.saveSetlist(ids);
+  renderSongs();
+}
+
+function renderSongs() {
+  if (!master) return;
+  renderLibrary(library, songQuery, currentSong?.id ?? null, {
+    select: selectSong,
+    edit: (song) => openEditor(song, editorHandlers),
+    addToSetlist: (id) => updateSetlist([...library.setlist, id]),
+    removeFromSetlist: (i) => updateSetlist(library.setlist.filter((_, j) => j !== i)),
+    move: (i, d) => {
+      const ids = [...library.setlist];
+      const j = i + d;
+      if (j < 0 || j >= ids.length) return;
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+      updateSetlist(ids);
+    },
+  });
+  const cs = $('currentSong');
+  cs.textContent = currentSong
+    ? `${currentSong.title}${currentSong.artist ? ' — ' + currentSong.artist : ''}`
+    : 'Alege o piesă din setlist sau bibliotecă';
+  cs.classList.toggle('text-neutral-400', !currentSong);
+  cs.classList.toggle('font-bold', !!currentSong);
 }
 
 /**
  * Tempo and meter edits while playing take effect on the next downbeat.
  * Rapid button presses are batched so the band does not hear several restarts.
  */
-type Patch = Partial<Pick<Segment, 'bpm' | 'beatsPerBar'>>;
+type Patch = Partial<Pick<Segment, 'bpm' | 'beatsPerBar' | 'beatUnit'>>;
 let pendingPatch: Patch = {};
 
 function updateMasterTransport(patch: Patch) {
@@ -257,10 +379,14 @@ function publish(t: Transport) {
 }
 
 function renderMasterState() {
-  $('bpm').textContent = String({ ...lastSegment(transport), ...pendingPatch }.bpm);
-  const btn = $('startStop');
-  btn.textContent = transport.running ? 'STOP' : 'START';
+  const seg = { ...lastSegment(transport), ...pendingPatch };
+  $('bpm').textContent = String(seg.bpm);
+  $<HTMLSelectElement>('meter').value = `${seg.beatsPerBar}/${seg.beatUnit ?? 4}`;
+  const btn = $<HTMLButtonElement>('startStop');
   const r = transport.running;
+  btn.textContent = r ? 'STOP' : 'START';
+  btn.disabled = !r && mode === 'songs' && !currentSong;
+  btn.classList.toggle('opacity-40', btn.disabled);
   btn.classList.toggle('bg-red-600', r);
   btn.classList.toggle('active:bg-red-500', r);
   btn.classList.toggle('bg-green-600', !r);
@@ -413,20 +539,55 @@ function frame() {
 
   const calibrating = !$('calOverlay').classList.contains('hidden');
   const now = engine.masterNow();
+
+  // The master stops the song after its last bar and loads the next one from the setlist.
+  if (master && isFinished(transport, now)) {
+    publish(stopTransport(transport));
+    if (mode === 'songs' && currentSong && library.setlist.includes(currentSong.id)) stepSetlist(1);
+  }
+
   const b = calibrating || !transportApplied ? null : beatAt(transport, now);
-  const flash = $('flash');
+  const song = transport.song;
+  const pos = b && song ? songPosition(song, b.bar) : null;
+  const preRoll = !!pos && pos.barsToNext === 1;
+
+  show($('songHeader'), !!song);
+  if (song) {
+    $('songTitle').textContent = song.title;
+    $('songArtist').textContent = song.artist;
+  }
 
   if (!b) {
-    $('beatNum').textContent = transport.running && transportApplied ? '…' : '–';
-    $('barNum').textContent = transport.running && !transportApplied ? 'Sincronizare…' : '';
+    const syncing = transport.running && !transportApplied;
+    const ended = transport.running && transportApplied && song && now > segmentAt(transport, now).t;
+    $('beatNum').textContent = transport.running && transportApplied && !ended ? '…' : '–';
+    $('sectionLabel').textContent = ended ? 'FINAL' : '';
+    $('barNum').textContent = syncing ? 'Sincronizare…' : song && !transport.running ? 'Gata de start' : '';
+    $('songBarNum').textContent = '';
+    show($('cueBanner'), false);
     lastBeat = -1;
   } else if (b.beat !== lastBeat) {
     lastBeat = b.beat;
     $('beatNum').textContent = String(b.beatInBar + 1);
-    $('barNum').textContent = `Măsura ${b.bar + 1}`;
+    if (pos && song) {
+      $('sectionLabel').textContent = pos.countIn ? 'COUNT-IN' : (pos.section ?? '');
+      $('barNum').textContent = pos.countIn ? '' : `Măsura ${pos.barInSection} din ${pos.sectionBars}`;
+      $('songBarNum').textContent = pos.countIn ? `de la măsura ${pos.songBar}` : `${pos.songBar} / ${song.bars}`;
+      const next = pos.next;
+      $('cueBanner').textContent = next
+        ? `URMEAZĂ: ${[next.text, describeChange(next)].filter(Boolean).join(' · ')}`
+        : '';
+      show($('cueBanner'), preRoll && !!next);
+    } else {
+      $('sectionLabel').textContent = '';
+      $('barNum').textContent = `Măsura ${b.bar + 1}`;
+      $('songBarNum').textContent = '';
+      show($('cueBanner'), false);
+    }
+    // Beat 1 amber, others grey; during the bar before a change every beat flashes red.
     const accent = b.beatInBar === 0;
     flash.style.transition = 'none';
-    flash.style.backgroundColor = accent ? '#f59e0b' : '#525252';
+    flash.style.backgroundColor = preRoll ? (accent ? '#f59e0b' : '#dc2626') : accent ? '#f59e0b' : '#525252';
     $('beatNum').style.color = accent ? '#000' : '#fff';
     requestAnimationFrame(() => {
       flash.style.transition = 'background-color 180ms ease-out';
@@ -435,7 +596,7 @@ function frame() {
     });
   }
   const seg = segmentAt(transport, now);
-  $('tempoInfo').textContent = `${seg.bpm} BPM · ${seg.beatsPerBar}/4`;
+  $('tempoInfo').textContent = `${Math.round(bpmAt(transport, now))} BPM · ${seg.beatsPerBar}/${seg.beatUnit ?? 4}`;
 
   if (client) {
     const s = client.sync.stats();
@@ -444,6 +605,8 @@ function frame() {
       : `sincronizare ceas… (${s.samples})`;
   }
 }
+
+const flash = $('flash');
 
 function fmt(n: number): string {
   return Number.isFinite(n) ? n.toFixed(1) : '–';

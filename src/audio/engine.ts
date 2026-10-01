@@ -160,7 +160,7 @@ export class MetronomeEngine {
       const localMs = this.timeSource.masterToLocal(tick.time) - this._latencyMs;
       const when = this.clock.perfToCtx(localMs);
       if (when > now + HORIZON_S) break;
-      if (when >= now + MIN_LEAD_S) {
+      if (when >= now + MIN_LEAD_S && tick.audible) {
         this.scheduled.push({ when, nodes: scheduleClick(this.ctx, this.out, this._sound, tick.level, when, this.noise) });
       }
       this.nextIndex++;

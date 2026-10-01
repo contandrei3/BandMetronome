@@ -8,11 +8,14 @@ export interface Settings {
   subdivision: Subdivision;
   /** Bluetooth/output latency compensation for this phone + headphones, in ms. */
   latencyMs: number;
+  /** Master only: free tempo or songs, and the last loaded song. */
+  masterMode: 'free' | 'songs';
+  lastSongId: string | null;
 }
 
 const KEY = 'bandmetro.settings.v1';
 
-const DEFAULTS: Settings = { name: '', sound: 'click', volume: 0.8, subdivision: 1, latencyMs: 0 };
+const DEFAULTS: Settings = { name: '', sound: 'click', volume: 0.8, subdivision: 1, latencyMs: 0, masterMode: 'free', lastSongId: null };
 
 export function loadSettings(): Settings {
   try {

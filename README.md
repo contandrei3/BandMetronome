@@ -15,6 +15,17 @@ local (Web Audio); prin rețea circulă doar sincronizarea ceasului și comenzil
   la −80 dB ține legătura Bluetooth trează.
 - **Flash-ul vizual** nu e întârziat (ecranul nu are latența Bluetooth-ului).
 
+## Piese și setlist (Master → „Piese”)
+
+- **Bibliotecă**: titlu, artist, număr de măsuri, count-in și o listă de schimbări pe măsuri
+  (BPM, ritm ca `4/4` sau `7/8`, instrucțiune text). „Treptat” face accelerando/ritardando de la
+  schimbarea de tempo anterioară până la măsura respectivă.
+- **Setlist**: ordinea pieselor; „Următoarea ▶” încarcă piesa următoare. La finalul unei piese din setlist,
+  următoarea se încarcă automat (oprită).
+- **Pe ecranul tuturor**: secțiunea curentă, „Măsura 3 din 8”, măsura din piesă și, cu o măsură înainte
+  de orice schimbare, banner „URMEAZĂ: …” și flash roșu pe fiecare bătaie.
+- Biblioteca se salvează local pe telefonul Master (merge fără internet). Sincronizarea cu Firebase urmează.
+
 ## Calibrarea latenței Bluetooth
 
 Fiecare combinație telefon + căști are altă latență (de obicei 150–300 ms). Setarea se salvează pe telefon.

@@ -47,9 +47,18 @@
         </div>
       </header>
 
-      <section id="flash" class="flex aspect-square flex-col items-center justify-center rounded-3xl bg-neutral-950 ring-1 ring-neutral-800 transition-colors duration-150">
+      <section id="songHeader" class="hidden flex-col items-center text-center">
+        <div id="songTitle" class="text-xl font-black"></div>
+        <div id="songArtist" class="text-sm text-neutral-500"></div>
+      </section>
+
+      <div id="cueBanner" class="hidden rounded-2xl bg-amber-500 px-4 py-3 text-center text-lg font-black text-black"></div>
+
+      <section id="flash" class="flex aspect-square flex-col items-center justify-center rounded-3xl bg-neutral-950 px-4 text-center ring-1 ring-neutral-800 transition-colors duration-150">
+        <div id="sectionLabel" class="line-clamp-2 text-3xl font-black uppercase text-amber-400"></div>
         <div id="beatNum" class="font-mono text-[9rem] leading-none font-black text-neutral-700">–</div>
-        <div id="barNum" class="mt-2 text-xl text-neutral-400"></div>
+        <div id="barNum" class="mt-2 text-2xl font-bold text-neutral-300"></div>
+        <div id="songBarNum" class="font-mono text-sm text-neutral-500"></div>
         <div id="tempoInfo" class="mt-1 font-mono text-neutral-500"></div>
       </section>
 
@@ -57,17 +66,34 @@
 
       <!-- Master controls -->
       <section id="masterPanel" class="hidden flex-col gap-3 rounded-2xl bg-neutral-950 p-4 ring-1 ring-neutral-800">
-        <div class="flex items-center justify-between gap-2">
-          <button data-bpm="-5" class="bpmBtn h-14 w-14 rounded-xl bg-neutral-900 text-lg font-bold">−5</button>
-          <button data-bpm="-1" class="bpmBtn h-14 w-14 rounded-xl bg-neutral-900 text-lg font-bold">−1</button>
-          <div class="text-center"><div id="bpm" class="font-mono text-5xl font-black">120</div><div class="text-xs text-neutral-500">BPM</div></div>
-          <button data-bpm="1" class="bpmBtn h-14 w-14 rounded-xl bg-neutral-900 text-lg font-bold">+1</button>
-          <button data-bpm="5" class="bpmBtn h-14 w-14 rounded-xl bg-neutral-900 text-lg font-bold">+5</button>
+        <div class="grid grid-cols-2 gap-2">
+          <button data-mode="free" class="modeBtn rounded-xl py-3 font-bold">Liber</button>
+          <button data-mode="songs" class="modeBtn rounded-xl py-3 font-bold">Piese</button>
         </div>
-        <label class="flex items-center justify-between">
-          <span class="text-neutral-400">Măsură</span>
-          <select id="beatsPerBar" class="rounded-xl bg-neutral-900 px-4 py-3 text-lg"></select>
-        </label>
+        <div id="freePanel" class="flex flex-col gap-3">
+          <div class="flex items-center justify-between gap-2">
+            <button data-bpm="-5" class="bpmBtn h-14 w-14 rounded-xl bg-neutral-900 text-lg font-bold">−5</button>
+            <button data-bpm="-1" class="bpmBtn h-14 w-14 rounded-xl bg-neutral-900 text-lg font-bold">−1</button>
+            <div class="text-center"><div id="bpm" class="font-mono text-5xl font-black">120</div><div class="text-xs text-neutral-500">BPM</div></div>
+            <button data-bpm="1" class="bpmBtn h-14 w-14 rounded-xl bg-neutral-900 text-lg font-bold">+1</button>
+            <button data-bpm="5" class="bpmBtn h-14 w-14 rounded-xl bg-neutral-900 text-lg font-bold">+5</button>
+          </div>
+          <label class="flex items-center justify-between">
+            <span class="text-neutral-400">Măsură</span>
+            <select id="meter" class="rounded-xl bg-neutral-900 px-4 py-3 text-lg"></select>
+          </label>
+        </div>
+        <div id="songPanel" class="hidden flex-col gap-3">
+          <div id="currentSong" class="rounded-xl bg-neutral-900 p-3 text-center text-neutral-400">Alege o piesă din setlist sau bibliotecă</div>
+          <label class="flex items-center justify-between">
+            <span class="text-neutral-400">Pornește de la măsura</span>
+            <input id="fromBar" type="number" inputmode="numeric" min="1" value="1" class="w-24 rounded-xl bg-neutral-900 px-3 py-2 text-center text-lg" />
+          </label>
+          <div class="grid grid-cols-2 gap-2">
+            <button id="prevSong" class="rounded-xl bg-neutral-900 py-3 font-bold">◀ Anterioara</button>
+            <button id="nextSong" class="rounded-xl bg-neutral-900 py-3 font-bold">Următoarea ▶</button>
+          </div>
+        </div>
         <button id="startStop" class="w-full rounded-2xl bg-green-600 py-6 text-2xl font-black active:bg-green-500">START</button>
         <details class="text-sm">
           <summary class="cursor-pointer text-neutral-400">Membri conectați: <span id="memberCount">0</span> · cod QR</summary>
@@ -75,6 +101,19 @@
           <canvas id="qr" class="mx-auto mt-3 rounded-xl bg-white p-2"></canvas>
           <p id="joinUrl" class="mt-2 break-all text-center text-xs text-neutral-500"></p>
         </details>
+      </section>
+
+      <!-- Setlist and library (master, songs mode) -->
+      <section id="libraryPanel" class="hidden flex-col gap-3 rounded-2xl bg-neutral-950 p-4 ring-1 ring-neutral-800">
+        <h2 class="text-sm font-bold uppercase tracking-wider text-neutral-500">Setlist</h2>
+        <ol id="setlist" class="flex flex-col gap-2"></ol>
+        <p id="setlistEmpty" class="text-sm text-neutral-500">Gol. Adaugă piese din bibliotecă cu „+ Setlist”.</p>
+        <h2 class="mt-2 text-sm font-bold uppercase tracking-wider text-neutral-500">Bibliotecă</h2>
+        <div class="flex gap-2">
+          <input id="songSearch" placeholder="Caută titlu sau artist" class="min-w-0 flex-1 rounded-xl bg-neutral-900 px-3 py-2" />
+          <button id="newSong" class="rounded-xl bg-amber-500 px-3 py-2 font-bold text-black">+ Nouă</button>
+        </div>
+        <ul id="songList" class="flex flex-col gap-2"></ul>
       </section>
 
       <!-- Personal mix -->
@@ -122,6 +161,36 @@
       <div class="flex w-full max-w-sm gap-3">
         <button id="calCancel" class="flex-1 rounded-xl bg-neutral-900 py-4 font-bold">Anulează</button>
         <button id="calApply" class="flex-1 rounded-xl bg-amber-500 py-4 font-bold text-black disabled:opacity-30" disabled>Aplică</button>
+      </div>
+    </div>
+
+    <!-- Song editor -->
+    <div id="editor" class="fixed inset-0 z-10 hidden overflow-auto bg-black p-4">
+      <div class="mx-auto flex w-full max-w-md flex-col gap-3 pb-10">
+        <h2 class="text-xl font-black">Piesă</h2>
+        <input id="edTitle" placeholder="Titlu" class="rounded-xl bg-neutral-900 px-3 py-3 text-lg" />
+        <input id="edArtist" placeholder="Artist" class="rounded-xl bg-neutral-900 px-3 py-3" />
+        <div class="grid grid-cols-2 gap-3">
+          <label class="text-sm text-neutral-400">Măsuri în total
+            <input id="edBars" type="number" inputmode="numeric" min="1" class="mt-1 w-full rounded-xl bg-neutral-900 px-3 py-2 text-lg text-neutral-100" />
+          </label>
+          <label class="text-sm text-neutral-400">Măsuri de count-in
+            <input id="edCountIn" type="number" inputmode="numeric" min="0" max="4" class="mt-1 w-full rounded-xl bg-neutral-900 px-3 py-2 text-lg text-neutral-100" />
+          </label>
+        </div>
+        <h3 class="mt-2 font-bold">Schimbări pe măsuri</h3>
+        <p class="text-xs leading-relaxed text-neutral-500">
+          Fiecare rând se aplică de la măsura lui. Câmpurile goale păstrează valoarea anterioară.
+          „Treptat” = accelerando/ritardando de la schimbarea de tempo anterioară până la această măsură.
+          La măsuri în optimi (7/8) BPM-ul numără optimile.
+        </p>
+        <div id="edMarkers" class="flex flex-col gap-3"></div>
+        <button id="edAddMarker" class="rounded-xl bg-neutral-900 py-3 font-bold ring-1 ring-neutral-700">+ Adaugă schimbare</button>
+        <div class="mt-4 grid grid-cols-3 gap-2">
+          <button id="edDelete" class="rounded-xl bg-red-900 py-3 font-bold">Șterge</button>
+          <button id="edCancel" class="rounded-xl bg-neutral-900 py-3 font-bold">Anulează</button>
+          <button id="edSave" class="rounded-xl bg-amber-500 py-3 font-bold text-black">Salvează</button>
+        </div>
       </div>
     </div>
 
