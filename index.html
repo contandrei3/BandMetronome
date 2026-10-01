@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ro">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#000000" />
+    <title>Band Metronome</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body class="min-h-dvh bg-black text-neutral-100 antialiased select-none">
+    <!-- Start screen -->
+    <main id="start" class="mx-auto flex min-h-dvh max-w-md flex-col justify-center gap-6 p-6">
+      <h1 class="text-center text-3xl font-black tracking-tight">Band Metronome</h1>
+      <label class="block">
+        <span class="text-sm text-neutral-400">Numele tău</span>
+        <input id="name" maxlength="20" class="mt-1 w-full rounded-xl bg-neutral-900 px-4 py-3 text-lg outline-none focus:ring-2 focus:ring-amber-500" placeholder="ex: Bas" />
+      </label>
+      <div class="rounded-2xl bg-neutral-950 p-4 ring-1 ring-neutral-800">
+        <span class="text-sm text-neutral-400">Cod sesiune</span>
+        <input id="code" inputmode="numeric" maxlength="4" pattern="[0-9]*" class="mt-1 w-full rounded-xl bg-neutral-900 px-4 py-4 text-center font-mono text-4xl tracking-[0.5em] outline-none focus:ring-2 focus:ring-amber-500" placeholder="0000" />
+        <button id="join" class="mt-4 w-full rounded-2xl bg-amber-500 py-6 text-2xl font-black text-black active:bg-amber-400">ALĂTURĂ-TE SESIUNII</button>
+      </div>
+      <button id="create" class="w-full rounded-2xl bg-neutral-900 py-4 text-lg font-bold ring-1 ring-neutral-700 active:bg-neutral-800">Creează sesiune (Master)</button>
+      <p id="startError" class="hidden text-center text-red-400"></p>
+    </main>
+
+    <!-- Session screen -->
+    <main id="session" class="mx-auto hidden max-w-md flex-col gap-4 p-4 pb-10">
+      <header class="flex items-center justify-between text-sm">
+        <div><span id="role" class="font-bold"></span> · cod <span id="sessionCode" class="font-mono text-lg font-bold text-amber-400"></span></div>
+        <div id="connState" class="text-neutral-400"></div>
+      </header>
+
+      <section id="flash" class="flex aspect-square flex-col items-center justify-center rounded-3xl bg-neutral-950 ring-1 ring-neutral-800 transition-colors duration-150">
+        <div id="beatNum" class="font-mono text-[9rem] leading-none font-black text-neutral-700">–</div>
+        <div id="barNum" class="mt-2 text-xl text-neutral-400"></div>
+        <div id="tempoInfo" class="mt-1 font-mono text-neutral-500"></div>
+      </section>
+
+      <div id="syncInfo" class="text-center font-mono text-xs text-neutral-500"></div>
+
+      <!-- Master controls -->
+      <section id="masterPanel" class="hidden flex-col gap-3 rounded-2xl bg-neutral-950 p-4 ring-1 ring-neutral-800">
+        <div class="flex items-center justify-between gap-2">
+          <button data-bpm="-5" class="bpmBtn h-14 w-14 rounded-xl bg-neutral-900 text-lg font-bold">−5</button>
+          <button data-bpm="-1" class="bpmBtn h-14 w-14 rounded-xl bg-neutral-900 text-lg font-bold">−1</button>
+          <div class="text-center"><div id="bpm" class="font-mono text-5xl font-black">120</div><div class="text-xs text-neutral-500">BPM</div></div>
+          <button data-bpm="1" class="bpmBtn h-14 w-14 rounded-xl bg-neutral-900 text-lg font-bold">+1</button>
+          <button data-bpm="5" class="bpmBtn h-14 w-14 rounded-xl bg-neutral-900 text-lg font-bold">+5</button>
+        </div>
+        <label class="flex items-center justify-between">
+          <span class="text-neutral-400">Măsură</span>
+          <select id="beatsPerBar" class="rounded-xl bg-neutral-900 px-4 py-3 text-lg"></select>
+        </label>
+        <button id="startStop" class="w-full rounded-2xl bg-green-600 py-6 text-2xl font-black active:bg-green-500">START</button>
+        <details class="text-sm">
+          <summary class="cursor-pointer text-neutral-400">Membri conectați: <span id="memberCount">0</span> · cod QR</summary>
+          <ul id="members" class="mt-2 space-y-1 font-mono text-xs text-neutral-400"></ul>
+          <canvas id="qr" class="mx-auto mt-3 rounded-xl bg-white p-2"></canvas>
+          <p id="joinUrl" class="mt-2 break-all text-center text-xs text-neutral-500"></p>
+        </details>
+      </section>
+
+      <!-- Personal mix -->
+      <section class="flex flex-col gap-4 rounded-2xl bg-neutral-950 p-4 ring-1 ring-neutral-800">
+        <h2 class="text-sm font-bold uppercase tracking-wider text-neutral-500">Mixul meu</h2>
+        <label class="flex items-center justify-between gap-3">
+          <span class="text-neutral-400">Sunet</span>
+          <select id="sound" class="rounded-xl bg-neutral-900 px-4 py-3 text-lg"></select>
+        </label>
+        <label class="flex items-center gap-3">
+          <span class="text-neutral-400">Volum</span>
+          <input id="volume" type="range" min="0" max="1" step="0.01" class="w-full accent-amber-500" />
+        </label>
+        <div>
+          <span class="text-neutral-400">Subdiviziune</span>
+          <div id="subdivisions" class="mt-2 grid grid-cols-4 gap-2"></div>
+        </div>
+        <div>
+          <div class="flex items-center justify-between">
+            <span class="text-neutral-400">Latență căști</span>
+            <span class="font-mono text-2xl font-bold"><span id="latency">0</span> ms</span>
+          </div>
+          <div class="mt-2 grid grid-cols-4 gap-2">
+            <button data-lat="-10" class="latBtn rounded-xl bg-neutral-900 py-3 font-bold">−10</button>
+            <button data-lat="-1" class="latBtn rounded-xl bg-neutral-900 py-3 font-bold">−1</button>
+            <button data-lat="1" class="latBtn rounded-xl bg-neutral-900 py-3 font-bold">+1</button>
+            <button data-lat="10" class="latBtn rounded-xl bg-neutral-900 py-3 font-bold">+10</button>
+          </div>
+          <button id="calibrate" class="mt-2 w-full rounded-xl bg-neutral-900 py-3 font-bold ring-1 ring-neutral-700">Calibrare prin atingere</button>
+          <p class="mt-2 text-xs leading-relaxed text-neutral-500">
+            Reglaj fin: un telefon din sesiune rămâne <b>fără Bluetooth</b> (sună pe difuzor, latență 0). Ascultă cu o cască
+            și difuzorul în același timp și ajustează până când cele două clicuri se aud ca unul singur.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <!-- Tap calibration overlay -->
+    <div id="calOverlay" class="fixed inset-0 z-10 hidden flex-col items-center justify-center gap-6 bg-black p-6 text-center">
+      <p class="text-lg text-neutral-300">Ascultă clicul din căști și atinge ecranul exact pe el.</p>
+      <div id="calPad" class="flex aspect-square w-full max-w-sm items-center justify-center rounded-full bg-neutral-900 text-6xl font-black ring-4 ring-neutral-700 active:bg-amber-600">
+        <span id="calCount">0</span>
+      </div>
+      <p id="calResult" class="min-h-[3rem] text-xl"></p>
+      <div class="flex w-full max-w-sm gap-3">
+        <button id="calCancel" class="flex-1 rounded-xl bg-neutral-900 py-4 font-bold">Anulează</button>
+        <button id="calApply" class="flex-1 rounded-xl bg-amber-500 py-4 font-bold text-black disabled:opacity-30" disabled>Aplică</button>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
