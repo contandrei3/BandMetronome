@@ -39,6 +39,10 @@ export interface SongInfo {
   /** Bar number as written in the song (1-based) of `firstBar`. */
   firstSongBar: number;
   cues: Cue[];
+  /** Master time at which song bar 1 starts (or would have, when starting later in the song). */
+  bar1At: number;
+  /** Backing track; every device plays its own copy in sync with the click. */
+  track?: { id: string; offsetMs: number };
 }
 
 export interface Cue {

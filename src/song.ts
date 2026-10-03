@@ -21,6 +21,19 @@ export interface Marker {
   roles?: Role[];
 }
 
+/**
+ * Backing track ("negativ") of a song. Only this description is shared via
+ * Firebase; the audio itself is kept on the devices and passed phone to phone.
+ */
+export interface TrackRef {
+  /** SHA-256 of the file, so every device knows it has exactly the same audio. */
+  id: string;
+  name: string;
+  /** Where song bar 1 starts in the file, in ms (may be negative if the file starts late). */
+  offsetMs: number;
+  durationMs: number;
+}
+
 export interface Song {
   id: string;
   title: string;
@@ -30,6 +43,7 @@ export interface Song {
   countInBars: number;
   /** Sorted by bar; the first one is at bar 1 and sets the initial tempo and meter. */
   markers: Marker[];
+  track?: TrackRef;
   updatedAt: number;
 }
 
@@ -135,6 +149,8 @@ export function songTransport(input: Song, startAt: number, rev: number, fromBar
     artist: song.artist,
     firstBar: first.bar,
     firstSongBar: startBar + 1,
+    bar1At: shift,
+    track: song.track ? { id: song.track.id, offsetMs: song.track.offsetMs } : undefined,
     endBar: song.bars,
     bars: song.bars,
     cues,

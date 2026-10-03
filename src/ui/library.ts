@@ -88,7 +88,7 @@ function songInfo(song: Song, prefix: string): HTMLElement {
   const first = song.markers[0];
   const meta = `${first?.bpm ?? '–'} BPM · ${first?.beatsPerBar ?? 4}/${first?.beatUnit ?? 4} · ${song.bars} măs.`;
   d.innerHTML = `<div class="truncate font-bold"></div><div class="truncate text-xs text-neutral-500"></div>`;
-  (d.children[0] as HTMLElement).textContent = `${prefix} ${song.title}`.trim();
+  (d.children[0] as HTMLElement).textContent = `${prefix} ${song.title}${song.track ? ' 🎧' : ''}`.trim();
   (d.children[1] as HTMLElement).textContent = [song.artist, meta].filter(Boolean).join(' · ');
   return d;
 }

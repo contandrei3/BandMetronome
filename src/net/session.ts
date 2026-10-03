@@ -1,6 +1,7 @@
 import Peer, { type DataConnection, type PeerOptions } from 'peerjs';
 import { ClockSync } from '../sync/clockSync';
 import type { Transport } from '../timeline';
+import { TRACK_LABEL, type MasterTracks, type MemberTracks } from './trackShare';
 
 const ID_PREFIX = 'bandmetro-v1-';
 
@@ -8,7 +9,9 @@ export type Message =
   | { t: 'ping'; id: number; c0: number }
   | { t: 'pong'; id: number; c0: number; m: number; epoch: string }
   | { t: 'state'; transport: Transport; epoch: string }
-  | { t: 'status'; name: string; minRtt: number; jitter: number; latencyMs: number };
+  | { t: 'status'; name: string; minRtt: number; jitter: number; latencyMs: number }
+  /** Backing tracks of the setlist, so members can fetch them before they are needed. */
+  | { t: 'prefetch'; ids: string[] };
 
 export interface MemberStatus {
   peer: string;
@@ -58,6 +61,8 @@ export class MasterSession {
   private conns = new Map<string, DataConnection>();
   readonly members = new Map<string, MemberStatus>();
   code = '';
+  tracks: MasterTracks | null = null;
+  private prefetchIds: string[] = [];
   onMembersChange: () => void = () => {};
   onState: (s: ConnState, detail?: string) => void = () => {};
 
@@ -122,14 +127,25 @@ export class MasterSession {
     for (const c of this.conns.values()) if (c.open) c.send(this.stateMessage());
   }
 
+  /** Announces which backing tracks members should have ready. */
+  prefetch(ids: string[]): void {
+    this.prefetchIds = ids;
+    for (const c of this.conns.values()) if (c.open) c.send({ t: 'prefetch', ids } satisfies Message);
+  }
+
   private stateMessage(): Message {
     return { t: 'state', transport: this.transport, epoch: this.epoch };
   }
 
   private accept(conn: DataConnection): void {
+    if (conn.label === TRACK_LABEL) {
+      this.tracks?.accept(conn);
+      return;
+    }
     conn.on('open', () => {
       this.conns.set(conn.peer, conn);
       conn.send(this.stateMessage());
+      if (this.prefetchIds.length) conn.send({ t: 'prefetch', ids: this.prefetchIds } satisfies Message);
     });
     conn.on('data', (raw) => {
       const msg = raw as Message;
@@ -162,7 +178,9 @@ export class ClientSession {
   private epoch: string | null = null;
   private lastHeard = 0;
   transport: Transport | null = null;
+  tracks: MemberTracks | null = null;
   onTransport: (t: Transport) => void = () => {};
+  onPrefetch: (ids: string[]) => void = () => {};
   /** The master page was reloaded: its clock restarted and sync starts over. */
   onMasterRestart: () => void = () => {};
   onState: (s: ConnState, detail?: string) => void = () => {};
@@ -202,6 +220,9 @@ export class ClientSession {
     conn.on('open', () => {
       this.onState('connected');
       this.startTimers();
+      // Files get their own connection so transfers never delay the clock pings.
+      const files = this.peer?.connect(ID_PREFIX + this.code, { label: TRACK_LABEL, serialization: 'binary', reliable: true });
+      if (files) this.tracks?.attach(files);
     });
     conn.on('data', (raw) => this.handle(raw as Message));
     conn.on('close', () => {
@@ -233,6 +254,8 @@ export class ClientSession {
     } else if (msg.t === 'state') {
       this.transport = msg.transport;
       this.onTransport(msg.transport);
+    } else if (msg.t === 'prefetch') {
+      this.onPrefetch(msg.ids);
     }
   }
 

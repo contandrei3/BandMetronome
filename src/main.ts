@@ -6,6 +6,7 @@ import { analyzeTaps, CALIBRATION_PERIOD_MS, CALIBRATION_TAPS } from './calibrat
 import { firebaseConfig } from './firebaseConfig';
 import { clearMaster, loadMaster, saveMaster } from './masterState';
 import { ClientSession, MasterSession, type ConnState } from './net/session';
+import { MasterTracks, MemberTracks, type TrackEvents } from './net/trackShare';
 import { cueIsFor, roleInfo, ROLES, type Role } from './roles';
 import { parseRoute, routeHash, type Route } from './route';
 import { loadSettings, saveSettings } from './settings';
@@ -27,6 +28,7 @@ import {
 } from './timeline';
 import { openEditor, parseMeter } from './ui/editor';
 import { renderLiveSetlist, renderSetlist, renderSongList, type LibraryHandlers } from './ui/library';
+import { getTrack } from './tracks';
 import { keepScreenOn } from './wakeLock';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -137,6 +139,7 @@ let unsubscribe = store.subscribe(onLibrary);
 
 function onLibrary(lib: Library) {
   library = lib;
+  announceTracks();
   // Keep the loaded song in step with edits made on other phones.
   if (currentSong) currentSong = library.songs.find((s) => s.id === currentSong!.id) ?? currentSong;
   renderSongs();
@@ -246,6 +249,10 @@ if (initialRoute) {
   setView((saved as View | null) ?? 'session');
 }
 $('resumeExit').addEventListener('click', exitSession);
+// A session link opened in a tab that already shows the app (no page load happens for a hash change).
+window.addEventListener('hashchange', () => {
+  if (!master && !client && parseRoute(location.hash, '')) location.reload();
+});
 $('create').addEventListener('click', () => void startMaster());
 $('join').addEventListener('click', () => {
   const code = codeInput.value.trim();
@@ -283,6 +290,7 @@ async function boot(): Promise<MetronomeEngine> {
   await e.start();
   e.sound = settings.sound;
   e.volume = settings.volume;
+  e.trackVolume = settings.trackVolume;
   e.subdivision = settings.subdivision;
   e.latencyMs = settings.latencyMs;
   keepScreenOn();
@@ -301,6 +309,7 @@ async function startMaster(preferred?: string) {
     master = new MasterSession(transport);
     master.onState = setConnState;
     master.onMembersChange = renderMembers;
+    master.tracks = new MasterTracks(trackEvents);
     const code = await master.open(preferred);
     setBusy(null);
     // Carry on where the page left off (same tempo, and in time if it was playing).
@@ -311,6 +320,8 @@ async function startMaster(preferred?: string) {
     e.setTimeSource(IDENTITY_TIME);
     e.setTransport(transport);
     transportApplied = true;
+    loadTrackFor(transport);
+    announceTracks();
     enterSession({ role: 'master', code });
     show($('masterPanel'));
     initMasterControls();
@@ -343,6 +354,11 @@ async function startMember(code: string) {
   c.onTransport = (t) => {
     transport = t;
     if (transportApplied) e.setTransport(t);
+    loadTrackFor(t);
+  };
+  c.tracks = new MemberTracks(trackEvents);
+  c.onPrefetch = (ids) => {
+    for (const id of ids) void c.tracks?.need(id);
   };
   // The master's clock restarted: stay silent until it is locked again (see frame()).
   c.onMasterRestart = () => {
@@ -375,6 +391,64 @@ function setConnState(s: ConnState, detail?: string) {
     error: `🔴 eroare ${detail ?? ''}`,
   };
   $('connState').textContent = labels[s];
+}
+
+// ---------- Backing tracks ----------
+
+/** Per-file state for the on-screen status: download progress, or ready. */
+const trackState = new Map<string, number | 'ready'>();
+
+const trackEvents: TrackEvents = {
+  onStored(id, data) {
+    trackState.set(id, 'ready');
+    if (transport.song?.track?.id === id) void engine?.addTrack(id, data);
+    renderTrackInfo();
+  },
+  onProgress(id, fraction) {
+    trackState.set(id, fraction);
+    renderTrackInfo();
+  },
+};
+
+/** Decodes the loaded song's track, fetching it from the session if this device lacks it. */
+function loadTrackFor(t: Transport) {
+  const id = t.song?.track?.id;
+  renderTrackInfo();
+  if (!id || !engine || engine.hasTrack(id)) return;
+  void getTrack(id).then((data) => {
+    if (data) return trackEvents.onStored(id, data);
+    if (master) void master.tracks?.fetch(id);
+    else void client?.tracks?.need(id);
+  });
+}
+
+/** Tells members which tracks the setlist (and the loaded song) need, so they download early. */
+function announceTracks() {
+  if (!master) return;
+  const ids = new Set<string>();
+  const add = (s: Song | undefined) => s?.track && ids.add(s.track.id);
+  for (const id of library.setlist) add(library.songs.find((s) => s.id === id));
+  add(currentSong ?? undefined);
+  master.prefetch([...ids]);
+  for (const id of ids) {
+    // The master keeps its own copy too, so it can relay files to anyone joining later.
+    void getTrack(id).then((d) => {
+      if (d) trackState.set(id, 'ready');
+      else void master?.tracks?.fetch(id);
+    });
+  }
+}
+
+function renderTrackInfo() {
+  const id = transport.song?.track?.id;
+  const st = id ? trackState.get(id) : undefined;
+  $('trackInfo').textContent = !id
+    ? ''
+    : st === 'ready'
+      ? '🎧 Negativ pregătit'
+      : typeof st === 'number'
+        ? `🎧 Negativ: se descarcă ${Math.round(st * 100)}%`
+        : '🎧 Negativ: caut fișierul la ceilalți… (cine l-a adăugat trebuie să fie în sesiune)';
 }
 
 // ---------- Master controls ----------
@@ -484,6 +558,7 @@ function flushPending() {
 function publish(t: Transport) {
   transport = t;
   engine?.setTransport(t);
+  loadTrackFor(t);
   if (master) {
     master.setTransport(t);
     saveMaster(master.code, t);
@@ -538,6 +613,14 @@ function initPersonal() {
   vol.addEventListener('input', () => {
     settings.volume = Number(vol.value);
     if (engine) engine.volume = settings.volume;
+    saveSettings(settings);
+  });
+
+  const tvol = $<HTMLInputElement>('trackVolume');
+  tvol.value = String(settings.trackVolume);
+  tvol.addEventListener('input', () => {
+    settings.trackVolume = Number(tvol.value);
+    if (engine) engine.trackVolume = settings.trackVolume;
     saveSettings(settings);
   });
 
@@ -725,3 +808,6 @@ requestAnimationFrame(frame);
 function fmt(n: number): string {
   return Number.isFinite(n) ? n.toFixed(1) : '–';
 }
+
+// Development-only handle for automated browser tests.
+if (import.meta.env.DEV) Object.assign(window, { __bm: { engine: () => engine, transport: () => transport } });

@@ -108,6 +108,7 @@
                 <div id="tempoInfo" class="mt-1 font-mono text-neutral-500 lg:text-xl"></div>
               </div>
               <div id="syncInfo" class="text-center font-mono text-xs text-neutral-500"></div>
+              <div id="trackInfo" class="text-center text-sm text-neutral-400"></div>
             </div>
 
             <div class="flex flex-col gap-4">
@@ -161,6 +162,10 @@
                 <label class="flex items-center gap-3">
                   <span class="text-neutral-400">Volum</span>
                   <input id="volume" type="range" min="0" max="1" step="0.01" class="w-full accent-amber-500" />
+                </label>
+                <label class="flex items-center gap-3">
+                  <span class="shrink-0 text-neutral-400">Volum negativ</span>
+                  <input id="trackVolume" type="range" min="0" max="1" step="0.01" class="w-full accent-amber-500" />
                 </label>
                 <div>
                   <span class="text-neutral-400">Subdiviziune</span>
@@ -247,6 +252,22 @@
           <label class="text-sm text-neutral-400">Măsuri de count-in
             <input id="edCountIn" type="number" inputmode="numeric" min="0" max="4" class="mt-1 w-full rounded-xl bg-neutral-900 px-3 py-2 text-lg text-neutral-100" />
           </label>
+        </div>
+        <h3 class="mt-2 font-bold">Negativ (opțional)</h3>
+        <div class="flex flex-col gap-3 rounded-xl bg-neutral-950 p-3 ring-1 ring-neutral-800">
+          <div class="flex items-center gap-2">
+            <label class="shrink-0 cursor-pointer rounded-xl bg-neutral-900 px-3 py-2 font-bold ring-1 ring-neutral-700">🎧 Alege fișier<input id="edTrackFile" type="file" accept="audio/*" class="hidden" /></label>
+            <span id="edTrackName" class="min-w-0 flex-1 truncate text-sm text-neutral-400"></span>
+            <button id="edTrackRemove" class="h-10 w-10 shrink-0 rounded-lg bg-neutral-900" aria-label="Scoate negativul">✕</button>
+          </div>
+          <label class="flex items-center justify-between gap-3 text-sm text-neutral-400">
+            <span>Măsura 1 începe în fișier la (secunde)</span>
+            <input id="edTrackOffset" type="number" step="0.01" inputmode="decimal" class="w-28 rounded-lg bg-neutral-900 px-2 py-2 text-center text-lg text-neutral-100" />
+          </label>
+          <p class="text-xs leading-relaxed text-neutral-500">
+            Fișierul rămâne pe acest dispozitiv și se trimite automat, telefon la telefon, celor din sesiune (nu se urcă în Firebase).
+            Tempo-ul piesei de mai jos trebuie să fie cel al negativului.
+          </p>
         </div>
         <h3 class="mt-2 font-bold">Schimbări pe măsuri</h3>
         <p class="text-xs leading-relaxed text-neutral-500">

@@ -44,6 +44,16 @@ local (Web Audio); prin rețea circulă doar sincronizarea ceasului și comenzil
 Fără configurare, piesele rămân doar pe dispozitivul pe care au fost create. La prima conectare, piesele
 existente pe dispozitiv sunt urcate automat dacă baza de date e goală.
 
+## Negative (backing tracks)
+
+- În editorul piesei: „🎧 Alege fișier” (mp3/wav/m4a) și „Măsura 1 începe în fișier la (secunde)”.
+- Fișierul **nu** se urcă în Firebase: rămâne în browserul dispozitivului care l-a adăugat și se trimite
+  automat, telefon la telefon, prin conexiunea sesiunii. Dacă Master-ul nu îl are, îl cere de la membri și îl
+  retransmite. La intrarea în sesiune se descarcă din timp negativele din setlist.
+- Fiecare telefon redă negativul în căștile proprii, cu aceeași compensare Bluetooth ca click-ul; poziția e
+  corectată continuu (viteză ±0,2%, inaudibil) ca să rămână la câteva ms de click. „Volum negativ” e separat.
+- Cine a adăugat fișierul trebuie să fie în sesiune o dată, ca ceilalți să-l primească; apoi îl au toți.
+
 ## Calibrarea latenței Bluetooth
 
 Fiecare combinație telefon + căști are altă latență (de obicei 150–300 ms). Setarea se salvează pe telefon.

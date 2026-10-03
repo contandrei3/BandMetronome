@@ -1,5 +1,6 @@
 import { ROLES, type Role } from '../roles';
 import { newSong, normalizeSong, type Marker, type Song } from '../song';
+import { audioDurationMs, putTrack, trackId } from '../tracks';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -19,6 +20,37 @@ export function openEditor(song: Song | null, h: EditorHandlers): void {
   $<HTMLInputElement>('edBars').value = String(draft.bars);
   $<HTMLInputElement>('edCountIn').value = String(draft.countInBars);
   $('edDelete').classList.toggle('invisible', isNew);
+
+  // Backing track: the file is stored on this device as soon as it is picked.
+  const trackName = $('edTrackName');
+  const fileInput = $<HTMLInputElement>('edTrackFile');
+  const offsetInput = $<HTMLInputElement>('edTrackOffset');
+  const paintTrack = (status?: string) => {
+    trackName.textContent =
+      status ?? (draft.track ? `${draft.track.name} · ${formatDuration(draft.track.durationMs)}` : 'Niciun fișier');
+    $('edTrackRemove').classList.toggle('invisible', !draft.track);
+  };
+  offsetInput.value = draft.track ? String(draft.track.offsetMs / 1000) : '0';
+  paintTrack();
+  fileInput.value = '';
+  fileInput.onchange = async () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+    paintTrack('Se încarcă…');
+    try {
+      const data = await file.arrayBuffer();
+      const [id, durationMs] = await Promise.all([trackId(data), audioDurationMs(data)]);
+      await putTrack(id, data);
+      draft.track = { id, name: file.name, offsetMs: 0, durationMs };
+      paintTrack();
+    } catch {
+      paintTrack('Fișierul nu a putut fi citit ca audio');
+    }
+  };
+  $('edTrackRemove').onclick = () => {
+    draft.track = undefined;
+    paintTrack();
+  };
 
   const list = $('edMarkers');
   list.innerHTML = '';
@@ -52,6 +84,7 @@ export function openEditor(song: Song | null, h: EditorHandlers): void {
       bars: Number($<HTMLInputElement>('edBars').value) || 1,
       countInBars: Number($<HTMLInputElement>('edCountIn').value) || 0,
       markers: [...list.children].map((row) => readRow(row as HTMLElement)).filter((m): m is Marker => m !== null),
+      track: draft.track && { ...draft.track, offsetMs: Math.round((Number(offsetInput.value) || 0) * 1000) },
       updatedAt: Date.now(),
     });
     h.onSave(saved);
@@ -120,4 +153,9 @@ export function parseMeter(text: string): { beatsPerBar?: number; beatUnit?: num
   const beats = Number(m[1]);
   if (beats < 1 || beats > 32) return {};
   return { beatsPerBar: beats, beatUnit: m[2] ? Number(m[2]) : 4 };
+}
+
+function formatDuration(ms: number): string {
+  const s = Math.round(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }

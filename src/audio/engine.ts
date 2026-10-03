@@ -1,5 +1,6 @@
 import { firstTickAtOrAfter, tickAt, type Subdivision, type Transport } from '../timeline';
 import { makeNoiseBuffer, scheduleClick, type SoundKind } from './sounds';
+import { TrackPlayer } from './trackPlayer';
 
 /** Converts between master time and this device's performance.now() time, in ms. */
 export interface TimeSource {
@@ -65,6 +66,7 @@ export class MetronomeEngine {
   private _sound: SoundKind = 'click';
   private _subdivision: Subdivision = 1;
   private _latencyMs = 0;
+  private readonly track: TrackPlayer;
 
   constructor() {
     this.ctx = new AudioContext({ latencyHint: 'interactive' });
@@ -72,6 +74,26 @@ export class MetronomeEngine {
     this.out.connect(this.ctx.destination);
     this.clock = new AudioClock(this.ctx);
     this.noise = makeNoiseBuffer(this.ctx);
+    this.track = new TrackPlayer(this.ctx, {
+      ctxForMaster: (m) => this.clock.perfToCtx(this.timeSource.masterToLocal(m) - this._latencyMs),
+      masterForCtx: (c) => this.timeSource.localToMaster(this.clock.ctxToPerf(c) + this._latencyMs),
+    });
+  }
+
+  /** Backing-track volume, separate from the click. */
+  set trackVolume(v: number) {
+    this.track.gain.gain.setTargetAtTime(v, this.ctx.currentTime, 0.02);
+  }
+
+  hasTrack(id: string): boolean {
+    return this.track.has(id);
+  }
+
+  /** Decodes and keeps a backing track; it starts by itself when its song plays. */
+  async addTrack(id: string, data: ArrayBuffer): Promise<void> {
+    if (this.track.has(id)) return;
+    this.track.add(id, await this.ctx.decodeAudioData(data.slice(0)));
+    this.track.update(this.transport);
   }
 
   /** Must be called from a user gesture (autoplay policy). */
@@ -142,6 +164,7 @@ export class MetronomeEngine {
       return true;
     });
     const t = this.transport;
+    this.track.update(t);
     if (!t) return;
     const fromMaster = this.timeSource.localToMaster(this.clock.ctxToPerf(now + MIN_LEAD_S) + this._latencyMs);
     this.nextIndex = firstTickAtOrAfter(t, this._subdivision, fromMaster);
@@ -153,6 +176,7 @@ export class MetronomeEngine {
     const now = this.ctx.currentTime;
     this.scheduled = this.scheduled.filter((s) => s.when > now - 1);
     const t = this.transport;
+    if (this.ctx.state === 'running') this.track.update(t);
     if (!t || !t.running || this.ctx.state !== 'running') return;
 
     for (;;) {

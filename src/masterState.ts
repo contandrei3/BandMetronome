@@ -48,5 +48,10 @@ export function loadMaster(code: string): Transport | null {
 /** Moves a saved transport onto a clock where `perfNow` corresponds to `wallNow`. */
 export function rebaseTransport(s: SavedMaster, perfNow: number, wallNow: number): Transport {
   const shift = s.wallAt - s.perfAt - (wallNow - perfNow);
-  return { ...s.transport, segments: s.transport.segments.map((seg) => ({ ...seg, t: seg.t + shift })) };
+  const song = s.transport.song;
+  return {
+    ...s.transport,
+    segments: s.transport.segments.map((seg) => ({ ...seg, t: seg.t + shift })),
+    song: song && { ...song, bar1At: song.bar1At + shift },
+  };
 }
