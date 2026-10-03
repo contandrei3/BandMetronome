@@ -264,9 +264,36 @@
             <span>Măsura 1 începe în fișier la (secunde)</span>
             <input id="edTrackOffset" type="number" step="0.01" inputmode="decimal" class="w-28 rounded-lg bg-neutral-900 px-2 py-2 text-center text-lg text-neutral-100" />
           </label>
+          <div id="edTrackTools" class="flex flex-col gap-3">
+            <div class="flex flex-wrap items-center gap-2">
+              <button id="edAnalyze" class="rounded-xl bg-neutral-900 px-3 py-2 font-bold ring-1 ring-neutral-700 disabled:opacity-40">🔍 Detectează tempo-ul</button>
+              <button id="edApplyBpm" class="hidden rounded-xl bg-amber-500 px-3 py-2 font-bold text-black">Folosește BPM-ul găsit</button>
+            </div>
+            <p id="edAnalysis" class="text-sm leading-relaxed text-neutral-400"></p>
+            <label class="flex items-start gap-2 text-sm text-neutral-300">
+              <input id="edFollow" type="checkbox" class="mt-0.5 h-5 w-5 shrink-0 accent-amber-500 disabled:opacity-40" />
+              <span>Click-ul urmărește tempo-ul negativului, bătaie cu bătaie (pentru înregistrări făcute fără click, unde tempo-ul variază). Cere „Detectează tempo-ul”.</span>
+            </label>
+            <div>
+              <div class="mb-1 text-xs text-neutral-500">Mută măsura 1 față de negativ:</div>
+              <div class="grid grid-cols-4 gap-2">
+                <button data-nudge="-beat" class="rounded-lg bg-neutral-900 py-2 text-sm font-bold">◀ o bătaie</button>
+                <button data-nudge="-10" class="rounded-lg bg-neutral-900 py-2 text-sm font-bold">−10 ms</button>
+                <button data-nudge="10" class="rounded-lg bg-neutral-900 py-2 text-sm font-bold">+10 ms</button>
+                <button data-nudge="beat" class="rounded-lg bg-neutral-900 py-2 text-sm font-bold">o bătaie ▶</button>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <button id="edPreview" class="flex-1 rounded-xl bg-green-700 px-3 py-3 font-bold">▶ Ascultă cu click</button>
+              <label class="flex items-center gap-2 text-sm text-neutral-400">de la măsura
+                <input id="edPreviewBar" type="number" inputmode="numeric" min="1" value="1" class="w-16 rounded-lg bg-neutral-900 px-2 py-2 text-center text-neutral-100" />
+              </label>
+            </div>
+            <p id="edPreviewPos" class="min-h-[1.25rem] font-mono text-sm text-amber-400"></p>
+          </div>
           <p class="text-xs leading-relaxed text-neutral-500">
             Fișierul rămâne pe acest dispozitiv și se trimite automat, telefon la telefon, celor din sesiune (nu se urcă în Firebase).
-            Tempo-ul piesei de mai jos trebuie să fie cel al negativului.
+            Pași: alege fișierul → „Detectează tempo-ul” → ascultă cu click și mută măsura 1 până cade pe timp → Salvează.
           </p>
         </div>
         <h3 class="mt-2 font-bold">Schimbări pe măsuri</h3>

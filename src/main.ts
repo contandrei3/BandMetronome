@@ -178,7 +178,7 @@ if (firebaseConfig) {
   setStoreState('💾 Piese doar pe acest dispozitiv');
 }
 
-$('newSong').addEventListener('click', () => openEditor(null, editorHandlers));
+$('newSong').addEventListener('click', () => openEditor(null, editorHandlers, canPreview));
 $<HTMLInputElement>('songSearch').addEventListener('input', (e) => {
   songQuery = (e.target as HTMLInputElement).value;
   renderSongs();
@@ -195,6 +195,9 @@ const editorHandlers = {
   },
 };
 
+/** The editor's preview would play over the band: only while the session's click is stopped. */
+const canPreview = () => !transport.running;
+
 function updateSetlist(ids: string[]) {
   store.saveSetlist(ids).catch((e) => reportError(`Setlist: ${e?.message ?? e}`));
 }
@@ -207,7 +210,7 @@ function renderSongs() {
           setView('session');
         }
       : undefined,
-    edit: (song) => openEditor(song, editorHandlers),
+    edit: (song) => openEditor(song, editorHandlers, canPreview),
     addToSetlist: (id) => updateSetlist([...library.setlist, id]),
     removeFromSetlist: (i) => updateSetlist(library.setlist.filter((_, j) => j !== i)),
     move: (i, d) => {
@@ -825,7 +828,8 @@ function frame() {
     });
   }
   const seg = segmentAt(transport, now);
-  $('tempoInfo').textContent = `${Math.round(bpmAt(transport, now))} BPM · ${seg.beatsPerBar}/${seg.beatUnit ?? 4}`;
+  const bpm = bpmAt(transport, now);
+  $('tempoInfo').textContent = `${Number.isInteger(bpm) ? bpm : bpm.toFixed(1)} BPM · ${seg.beatsPerBar}/${seg.beatUnit ?? 4}`;
 
   if (client) {
     const s = client.sync.stats();

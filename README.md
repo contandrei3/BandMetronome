@@ -54,6 +54,14 @@ existente pe dispozitiv sunt urcate automat dacă baza de date e goală.
   corectată continuu (viteză ±0,2%, inaudibil) ca să rămână la câteva ms de click. „Volum negativ” e separat.
 - Cine a adăugat fișierul trebuie să fie în sesiune o dată, ca ceilalți să-l primească; apoi îl au toți.
 
+### Aliniere click ↔ negativ
+
+1. **🔍 Detectează tempo-ul**: găsește bătăile din audio, BPM-ul exact (cu zecimale) și timpul 1 al măsurii
+   (unde se schimbă acordurile și lovește toba mare). Măsura 1 se pune automat pe primul timp 1 găsit.
+2. Dacă tempo-ul e constant: **Folosește BPM-ul găsit**. Dacă variază (înregistrare fără click):
+   **Click-ul urmărește tempo-ul negativului** — click-ul se ia măsură cu măsură din bătăile detectate.
+3. **▶ Ascultă cu click** (în editor, fără sesiune) și corectează cu **◀ o bătaie / o bătaie ▶** sau ±10 ms.
+
 ## Calibrarea latenței Bluetooth
 
 Fiecare combinație telefon + căști are altă latență (de obicei 150–300 ms). Setarea se salvează pe telefon.

@@ -32,6 +32,13 @@ export interface TrackRef {
   /** Where song bar 1 starts in the file, in ms (may be negative if the file starts late). */
   offsetMs: number;
   durationMs: number;
+  /** Beats found in the file (ms), from the analysis in the editor. */
+  beats?: number[];
+  /**
+   * Take the tempo from `beats`, bar by bar, instead of the BPM markers: for
+   * recordings made without a click, whose tempo drifts.
+   */
+  follow?: boolean;
 }
 
 export interface Song {
@@ -96,33 +103,8 @@ function clamp(x: number, lo: number, hi: number): number {
  */
 export function songTransport(input: Song, startAt: number, rev: number, fromBar = 1): Transport {
   const song = normalizeSong(input);
-  const tempo = song.markers.filter((m) => m.bpm !== undefined || m.beatsPerBar !== undefined);
-
-  // Song-relative segments (t = 0 at bar 1), one per tempo/meter marker.
-  const segs: Segment[] = [];
-  let beat = 0;
-  for (let i = 0; i < tempo.length; i++) {
-    const m = tempo[i];
-    const prev = segs[segs.length - 1];
-    const bar = m.bar - 1;
-    if (prev) {
-      const rel = (bar - prev.bar) * prev.beatsPerBar;
-      beat = prev.beat + rel;
-      if (m.ramp && m.bpm !== undefined && rel > 0) {
-        prev.bpmEnd = m.bpm;
-        prev.rampBeats = rel;
-      }
-    }
-    const t = prev ? prev.t + beatOffset(prev, beat - prev.beat) : 0;
-    segs.push({
-      t,
-      beat,
-      bar,
-      bpm: m.bpm ?? (prev ? (prev.bpmEnd ?? prev.bpm) : 120),
-      beatsPerBar: m.beatsPerBar ?? prev?.beatsPerBar ?? 4,
-      beatUnit: m.beatUnit ?? prev?.beatUnit ?? 4,
-    });
-  }
+  const followed = song.track?.follow && song.track.beats?.length ? beatMapSegments(song) : null;
+  const segs: Segment[] = followed?.segs ?? markerSegments(song);
   const last = segs[segs.length - 1];
   const endBeat = last.beat + (song.bars - last.bar) * last.beatsPerBar;
 
@@ -164,7 +146,7 @@ export function songTransport(input: Song, startAt: number, rev: number, fromBar
     firstBar: first.bar,
     firstSongBar: startBar + 1,
     bar1At: shift,
-    track: song.track ? { id: song.track.id, offsetMs: song.track.offsetMs } : undefined,
+    track: song.track ? { id: song.track.id, offsetMs: followed?.offsetMs ?? song.track.offsetMs } : undefined,
     endBar: song.bars,
     bars: song.bars,
     cues,
@@ -222,4 +204,74 @@ export function describeChange(c: Cue): string {
   ]
     .filter(Boolean)
     .join(' · ');
+}
+
+/** Song-relative segments (t = 0 at bar 1), one per tempo/meter marker. */
+function markerSegments(song: Song): Segment[] {
+  const tempo = song.markers.filter((m) => m.bpm !== undefined || m.beatsPerBar !== undefined);
+  const segs: Segment[] = [];
+  let beat = 0;
+  for (let i = 0; i < tempo.length; i++) {
+    const m = tempo[i];
+    const prev = segs[segs.length - 1];
+    const bar = m.bar - 1;
+    if (prev) {
+      const rel = (bar - prev.bar) * prev.beatsPerBar;
+      beat = prev.beat + rel;
+      if (m.ramp && m.bpm !== undefined && rel > 0) {
+        prev.bpmEnd = m.bpm;
+        prev.rampBeats = rel;
+      }
+    }
+    const t = prev ? prev.t + beatOffset(prev, beat - prev.beat) : 0;
+    segs.push({
+      t,
+      beat,
+      bar,
+      bpm: m.bpm ?? (prev ? (prev.bpmEnd ?? prev.bpm) : 120),
+      beatsPerBar: m.beatsPerBar ?? prev?.beatsPerBar ?? 4,
+      beatUnit: m.beatUnit ?? prev?.beatUnit ?? 4,
+    });
+  }
+  return segs;
+}
+
+/**
+ * Song-relative segments taken from the beats found in the backing track:
+ * one segment per bar, its tempo from that bar's real length, so the click
+ * follows a recording that speeds up or slows down. Bar 1 starts at the
+ * detected beat nearest to the chosen offset; meters still come from the
+ * markers. Past the last detected beat the last bar's tempo continues.
+ */
+function beatMapSegments(song: Song): { segs: Segment[]; offsetMs: number } {
+  const beats = song.track!.beats!;
+  let b0 = 0;
+  for (let i = 1; i < beats.length; i++) {
+    if (Math.abs(beats[i] - song.track!.offsetMs) < Math.abs(beats[b0] - song.track!.offsetMs)) b0 = i;
+  }
+  const meterAt = (bar: number) => {
+    let bpb = 4;
+    let unit = 4;
+    for (const m of song.markers) {
+      if (m.bar - 1 > bar) break;
+      if (m.beatsPerBar !== undefined) {
+        bpb = m.beatsPerBar;
+        unit = m.beatUnit ?? 4;
+      }
+    }
+    return { bpb, unit };
+  };
+  const segs: Segment[] = [];
+  let beat = 0;
+  let lastBeatMs = 60000 / 120;
+  for (let bar = 0; bar < song.bars; bar++) {
+    const { bpb, unit } = meterAt(bar);
+    const i = b0 + beat;
+    const prev = segs[segs.length - 1];
+    const t = i < beats.length ? beats[i] - beats[b0] : prev ? prev.t + beatOffset(prev, prev.beatsPerBar) : 0;
+    if (i + bpb < beats.length) lastBeatMs = (beats[i + bpb] - beats[i]) / bpb;
+    segs.push({ t, beat, bar, bpm: 60000 / lastBeatMs, beatsPerBar: bpb, beatUnit: unit });
+    beat += bpb;
+  }
+  return { segs, offsetMs: beats[b0] };
 }

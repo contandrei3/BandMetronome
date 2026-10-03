@@ -151,6 +151,15 @@ export class MetronomeEngine {
     return this._latencyMs;
   }
 
+  /** Stops everything and releases the audio device (used by the editor's preview). */
+  async dispose(): Promise<void> {
+    clearInterval(this.timer);
+    this.timer = undefined;
+    this.transport = null;
+    this.track.stop();
+    await this.ctx.close();
+  }
+
   /** Android suspends audio when the page is hidden; call when it becomes visible again. */
   async resume(): Promise<void> {
     await this.ctx.resume();
