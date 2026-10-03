@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { songPosition, songTransport, type Song } from '../src/song';
+import { normalizeSong, songPosition, songTransport, type Song } from '../src/song';
 import { beatAt, bpmAt, firstTickAtOrAfter, isFinished, tickAt } from '../src/timeline';
 
 const song: Song = {
@@ -103,5 +103,13 @@ describe('role-specific cues', () => {
   it('announces upcoming cues only to the roles they are for', () => {
     expect(songPosition(info, 6, 'drums').next?.text).toBe('Fără tobe');
     expect(songPosition(info, 6, 'bass').next).toBeUndefined();
+  });
+});
+
+describe('normalizeSong', () => {
+  it('rounds and clamps values typed in the editor', () => {
+    const n = normalizeSong({ ...song, bars: 10.4, countInBars: 1.6, markers: [{ bar: 1.2, bpm: 9999, beatsPerBar: 0 }] });
+    expect(n).toMatchObject({ bars: 10, countInBars: 2 });
+    expect(n.markers[0]).toMatchObject({ bar: 1, bpm: 400, beatsPerBar: 1 });
   });
 });

@@ -66,7 +66,20 @@ export class MasterSession {
   onMembersChange: () => void = () => {};
   onState: (s: ConnState, detail?: string) => void = () => {};
 
-  constructor(private transport: Transport) {}
+  constructor(private transport: Transport) {
+    setInterval(() => this.pruneSilent(), 2000);
+  }
+
+  private pruneSilent(): void {
+    const cutoff = performance.now() - 3 * SILENCE_MS;
+    for (const [id, m] of this.members) {
+      if (m.lastSeen >= cutoff) continue;
+      this.members.delete(id);
+      this.conns.get(id)?.close();
+      this.conns.delete(id);
+      this.onMembersChange();
+    }
+  }
 
   /**
    * Resolves with the 4-digit code once the signaling server has accepted it.
@@ -171,6 +184,7 @@ export class ClientSession {
   readonly sync = new ClockSync();
   private peer: Peer | null = null;
   private conn: DataConnection | null = null;
+  private files: DataConnection | null = null;
   private pingTimer: number | undefined;
   private statusTimer: number | undefined;
   private pingId = 0;
@@ -221,8 +235,9 @@ export class ClientSession {
       this.onState('connected');
       this.startTimers();
       // Files get their own connection so transfers never delay the clock pings.
-      const files = this.peer?.connect(ID_PREFIX + this.code, { label: TRACK_LABEL, serialization: 'binary', reliable: true });
-      if (files) this.tracks?.attach(files);
+      this.files?.close();
+      this.files = this.peer?.connect(ID_PREFIX + this.code, { label: TRACK_LABEL, serialization: 'binary', reliable: true }) ?? null;
+      if (this.files) this.tracks?.attach(this.files);
     });
     conn.on('data', (raw) => this.handle(raw as Message));
     conn.on('close', () => {

@@ -74,7 +74,12 @@ export class TrackPlayer {
 
     const p = this.playing;
     if (p && p.id === song.track.id) {
-      if (now < p.startCtx) return;
+      if (now < p.startCtx) {
+        const due = trackPositionAt(song, this.time.masterForCtx(p.startCtx))! / 1000;
+        if (Math.abs(due - p.pos) <= 0.005) return;
+        this.stop();
+        return this.start(song.track.id, buffer, t!);
+      }
       p.pos += (now - Math.max(p.lastCtx, p.startCtx)) * p.rate;
       p.lastCtx = now;
       const err = expected / 1000 - p.pos;

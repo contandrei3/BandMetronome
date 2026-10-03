@@ -92,7 +92,10 @@ export class MetronomeEngine {
   /** Decodes and keeps a backing track; it starts by itself when its song plays. */
   async addTrack(id: string, data: ArrayBuffer): Promise<void> {
     if (this.track.has(id)) return;
-    this.track.add(id, await this.ctx.decodeAudioData(data.slice(0)));
+    const buffer = await this.ctx.decodeAudioData(data.slice(0));
+    // Another song may have been loaded while this one was decoding.
+    if (this.transport?.song?.track?.id !== id) return;
+    this.track.add(id, buffer);
     this.track.update(this.transport);
   }
 
@@ -179,11 +182,12 @@ export class MetronomeEngine {
     if (this.ctx.state === 'running') this.track.update(t);
     if (!t || !t.running || this.ctx.state !== 'running') return;
 
-    for (;;) {
+    // Bounded so a malformed transport (NaN times) can never freeze the page.
+    for (let guard = 0; guard < 2000; guard++) {
       const tick = tickAt(t, this._subdivision, this.nextIndex);
       const localMs = this.timeSource.masterToLocal(tick.time) - this._latencyMs;
       const when = this.clock.perfToCtx(localMs);
-      if (when > now + HORIZON_S) break;
+      if (!(when <= now + HORIZON_S)) break;
       if (when >= now + MIN_LEAD_S && tick.audible) {
         this.scheduled.push({ when, nodes: scheduleClick(this.ctx, this.out, this._sound, tick.level, when, this.noise) });
       }

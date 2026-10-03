@@ -168,8 +168,8 @@ export function idleTransport(bpm = 120, beatsPerBar = 4): Transport {
 }
 
 export function startTransport(prev: Transport, startAt: number): Transport {
-  const { bpm, beatsPerBar } = lastSegment(prev);
-  return { running: true, rev: prev.rev + 1, segments: [{ t: startAt, beat: 0, bar: 0, bpm, beatsPerBar }] };
+  const { bpm, beatsPerBar, beatUnit } = lastSegment(prev);
+  return { running: true, rev: prev.rev + 1, segments: [{ t: startAt, beat: 0, bar: 0, bpm, beatsPerBar, beatUnit }] };
 }
 
 export function stopTransport(prev: Transport): Transport {

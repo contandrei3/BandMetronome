@@ -62,6 +62,7 @@ export function newSong(): Song {
 /** Sorts, drops markers outside the song and makes sure bar 1 sets tempo and meter. */
 export function normalizeSong(song: Song): Song {
   const markers: Marker[] = song.markers
+    .map((m) => ({ ...m, bar: Math.round(m.bar) }))
     .filter((m) => m.bar >= 1 && m.bar <= song.bars)
     .sort((a, b) => a.bar - b.bar)
     .map((m) => ({ ...m, text: m.text?.trim() || undefined, roles: m.roles?.length ? m.roles : undefined }));
@@ -71,7 +72,20 @@ export function normalizeSong(song: Song): Song {
   first.beatsPerBar ??= 4;
   first.beatUnit ??= 4;
   first.ramp = undefined;
-  return { ...song, markers, bars: Math.max(1, Math.round(song.bars)), countInBars: Math.max(0, song.countInBars) };
+  for (const m of markers) {
+    if (m.bpm !== undefined) m.bpm = clamp(m.bpm, 20, 400);
+    if (m.beatsPerBar !== undefined) m.beatsPerBar = clamp(Math.round(m.beatsPerBar), 1, 32);
+  }
+  return {
+    ...song,
+    markers,
+    bars: clamp(Math.round(song.bars) || 1, 1, 2000),
+    countInBars: clamp(Math.round(song.countInBars) || 0, 0, 8),
+  };
+}
+
+function clamp(x: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, x));
 }
 
 /**

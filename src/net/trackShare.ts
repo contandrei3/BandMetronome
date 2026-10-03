@@ -28,7 +28,7 @@ export interface TrackEvents {
 
 /** One file connection to another phone. */
 class TrackLink {
-  private incoming = new Map<string, { buf: Uint8Array; got: number }>();
+  private incoming = new Map<string, { buf: Uint8Array; got: Set<number>; chunks: number }>();
 
   constructor(
     readonly conn: DataConnection,
@@ -57,16 +57,18 @@ class TrackLink {
   private handle(msg: FileMsg): void {
     if (msg.t === 'want') return this.onWant(msg.id, this);
     if (msg.t === 'have') {
-      this.incoming.set(msg.id, { buf: new Uint8Array(msg.size), got: 0 });
+      // A second copy of a file already arriving fills the same buffer.
+      if (this.incoming.get(msg.id)?.buf.byteLength !== msg.size) {
+        this.incoming.set(msg.id, { buf: new Uint8Array(msg.size), got: new Set(), chunks: Math.ceil(msg.size / CHUNK) });
+      }
       return this.onProgress(msg.id, 0);
     }
     const f = this.incoming.get(msg.id);
-    if (!f) return;
-    const bytes = new Uint8Array(msg.data);
-    f.buf.set(bytes, msg.i * CHUNK);
-    f.got += bytes.byteLength;
-    this.onProgress(msg.id, f.got / f.buf.byteLength);
-    if (f.got >= f.buf.byteLength) {
+    if (!f || msg.i >= f.chunks) return;
+    f.buf.set(new Uint8Array(msg.data), msg.i * CHUNK);
+    f.got.add(msg.i);
+    this.onProgress(msg.id, f.got.size / f.chunks);
+    if (f.got.size >= f.chunks) {
       this.incoming.delete(msg.id);
       this.onComplete(msg.id, f.buf.buffer as ArrayBuffer);
     }
@@ -163,8 +165,9 @@ export class MemberTracks {
   }
 
   private async received(id: string, data: ArrayBuffer): Promise<void> {
-    if (!(await verifyAndStore(id, data))) return;
+    const ok = await verifyAndStore(id, data);
+    // Either way the request is over; a corrupt copy is asked for again next time it is needed.
     this.wanted.delete(id);
-    this.events.onStored(id, data);
+    if (ok) this.events.onStored(id, data);
   }
 }

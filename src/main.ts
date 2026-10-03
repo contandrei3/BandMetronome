@@ -139,9 +139,20 @@ let unsubscribe = store.subscribe(onLibrary);
 
 function onLibrary(lib: Library) {
   library = lib;
+  if (master) {
+    // A refreshed master gets its loaded song back once the library arrives (Firebase is async).
+    const id = currentSong?.id ?? (transport.song ? settings.lastSongId : null);
+    const fresh = id ? library.songs.find((s) => s.id === id) : undefined;
+    if (fresh && fresh.updatedAt !== currentSong?.updatedAt) {
+      const wasLoaded = !!currentSong;
+      currentSong = fresh;
+      // Someone edited the loaded song (tempo, cues, track offset): show the band the new version.
+      if (wasLoaded && transport.song && !transport.running) loadSong(fresh, false);
+    }
+  } else if (currentSong) {
+    currentSong = library.songs.find((s) => s.id === currentSong!.id) ?? currentSong;
+  }
   announceTracks();
-  // Keep the loaded song in step with edits made on other phones.
-  if (currentSong) currentSong = library.songs.find((s) => s.id === currentSong!.id) ?? currentSong;
   renderSongs();
 }
 
@@ -176,7 +187,7 @@ $<HTMLInputElement>('songSearch').addEventListener('input', (e) => {
 const editorHandlers = {
   onSave(song: Song) {
     store.saveSong(song).catch((e) => reportError(`Salvare: ${e?.message ?? e}`));
-    if (master && currentSong?.id === song.id && !transport.running) selectSong(song);
+    if (master && currentSong?.id === song.id && !transport.running) loadSong(song, false);
   },
   onDelete(id: string) {
     store.deleteSong(id).catch((e) => reportError(`Ștergere: ${e?.message ?? e}`));
@@ -192,8 +203,7 @@ function renderSongs() {
   const h: LibraryHandlers = {
     load: master
       ? (song) => {
-          if (mode !== 'songs') setMode('songs');
-          selectSong(song);
+          if (!pickSong(song)) return;
           setView('session');
         }
       : undefined,
@@ -212,7 +222,7 @@ function renderSongs() {
   renderSongList(library, songQuery, id, h);
   renderSetlist(library, id, h);
   if (master) {
-    renderLiveSetlist(library, id, selectSong);
+    renderLiveSetlist(library, id, (song) => pickSong(song));
     const cs = $('currentSong');
     cs.textContent = currentSong
       ? `${currentSong.title}${currentSong.artist ? ' — ' + currentSong.artist : ''}`
@@ -486,8 +496,8 @@ function initMasterControls() {
     const from = Number($<HTMLInputElement>('fromBar').value) || 1;
     publish(songTransport(currentSong, at, transport.rev + 1, from));
   });
-  $('prevSong').addEventListener('click', () => stepSetlist(-1));
-  $('nextSong').addEventListener('click', () => stepSetlist(1));
+  $('prevSong').addEventListener('click', () => !transport.running && stepSetlist(-1));
+  $('nextSong').addEventListener('click', () => !transport.running && stepSetlist(1));
 
   // A refreshed master comes back in the mode it was in, with the same song loaded.
   if (transport.song) currentSong = library.songs.find((s) => s.id === settings.lastSongId) ?? null;
@@ -513,12 +523,31 @@ function setMode(m: Mode, restoring = false) {
   renderSongs();
 }
 
+/**
+ * A song tapped in a list. While the click runs nothing changes: an accidental
+ * tap on stage must not stop the band. Returns whether the song was loaded.
+ */
+function pickSong(song: Song): boolean {
+  if (transport.running) {
+    $('currentSong').textContent = 'Oprește întâi piesa curentă (STOP)';
+    setTimeout(renderSongs, 2000);
+    return false;
+  }
+  if (mode !== 'songs') setMode('songs');
+  selectSong(song);
+  return true;
+}
+
 /** Loads a song (stopped) so the band sees what comes next; START plays it. */
 function selectSong(song: Song) {
+  loadSong(song, true);
+}
+
+function loadSong(song: Song, resetFromBar: boolean) {
   currentSong = song;
   settings.lastSongId = song.id;
   saveSettings(settings);
-  $<HTMLInputElement>('fromBar').value = '1';
+  if (resetFromBar) $<HTMLInputElement>('fromBar').value = '1';
   publish({ ...songTransport(song, 0, transport.rev + 1), running: false });
   renderSongs();
 }
@@ -580,6 +609,8 @@ function renderMasterState() {
   btn.classList.toggle('active:bg-red-500', r);
   btn.classList.toggle('bg-green-600', !r);
   btn.classList.toggle('active:bg-green-500', !r);
+  // Song choice is locked while playing (see pickSong).
+  for (const id of ['prevSong', 'nextSong', 'liveSetlist', 'fromBar']) $(id).classList.toggle('opacity-40', r);
 }
 
 function renderMembers() {

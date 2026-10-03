@@ -59,3 +59,10 @@ describe('timeline', () => {
     expect(c.segments).toEqual([{ t: 0, beat: 0, bar: 0, bpm: 90, beatsPerBar: 4 }]);
   });
 });
+
+describe('free mode', () => {
+  it('keeps an x/8 meter when starting', () => {
+    const t = startTransport(changeTransport(idleTransport(), 0, 0, { beatsPerBar: 7, beatUnit: 8 }), 100);
+    expect(t.segments[0]).toMatchObject({ beatsPerBar: 7, beatUnit: 8 });
+  });
+});

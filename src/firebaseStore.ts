@@ -17,7 +17,10 @@ export async function createFirebaseStore(config: FirebaseOptions): Promise<Libr
     import('firebase/firestore'),
   ]);
   const app = initializeApp(config);
-  await signInAnonymously(getAuth(app));
+  const auth = getAuth(app);
+  // At a venue without internet the previous anonymous sign-in is restored from this device.
+  await auth.authStateReady();
+  if (!auth.currentUser) await signInAnonymously(auth);
   const db = fs.initializeFirestore(app, {
     localCache: fs.persistentLocalCache({ tabManager: fs.persistentMultipleTabManager() }),
     // Optional song fields are left undefined rather than deleted.
@@ -27,13 +30,21 @@ export async function createFirebaseStore(config: FirebaseOptions): Promise<Libr
   const setlistDoc = fs.doc(db, 'meta', 'setlist');
 
   // First time online: move songs created on this device before Firebase was set up.
-  const remote = await fs.getDocs(songsCol);
+  // Runs in the background so the library opens immediately (also offline).
   const local = readLocalLibrary();
-  if (remote.empty && local.songs.length > 0) {
-    const batch = fs.writeBatch(db);
-    for (const s of local.songs) batch.set(fs.doc(songsCol, s.id), s);
-    batch.set(setlistDoc, { ids: local.setlist });
-    await batch.commit();
+  if (local.songs.length > 0) {
+    void fs
+      .getDocsFromServer(songsCol)
+      .then((remote) => {
+        if (!remote.empty) return;
+        const batch = fs.writeBatch(db);
+        for (const s of local.songs) batch.set(fs.doc(songsCol, s.id), s);
+        batch.set(setlistDoc, { ids: local.setlist });
+        return batch.commit();
+      })
+      .catch(() => {
+        // Offline: try again on the next start.
+      });
   }
 
   return {
