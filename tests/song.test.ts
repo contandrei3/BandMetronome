@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeSong, songPosition, songTransport, type Song } from '../src/song';
+import { barsToCover, normalizeSong, songLengthMs, songPosition, songTransport, type Song } from '../src/song';
 import { beatAt, bpmAt, firstTickAtOrAfter, isFinished, tickAt } from '../src/timeline';
 
 const song: Song = {
@@ -111,5 +111,17 @@ describe('normalizeSong', () => {
     const n = normalizeSong({ ...song, bars: 10.4, countInBars: 1.6, markers: [{ bar: 1.2, bpm: 9999, beatsPerBar: 0 }] });
     expect(n).toMatchObject({ bars: 10, countInBars: 2 });
     expect(n.markers[0]).toMatchObject({ bar: 1, bpm: 400, beatsPerBar: 1 });
+  });
+});
+
+describe('song length vs backing track', () => {
+  const base: Song = { ...song, bars: 32, countInBars: 1, markers: [{ bar: 1, bpm: 120, beatsPerBar: 4 }] };
+  it('measures the click length from bar 1', () => {
+    expect(songLengthMs(base)).toBeCloseTo(32 * 2000);
+  });
+  it('finds the bars needed to cover the audio', () => {
+    // 2:53 of audio after bar 1 at 120 BPM 4/4 (2 s per bar) -> 87 bars.
+    expect(barsToCover(base, 173000)).toBe(87);
+    expect(barsToCover({ ...base, bars: 200 }, 173000)).toBe(87);
   });
 });

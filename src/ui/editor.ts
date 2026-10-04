@@ -1,7 +1,17 @@
 import { ROLES, type Role } from '../roles';
 import { analyzeBeats, decodeForAnalysis, fitGrid, tempoRange, type BeatAnalysis } from '../analysis/beats';
 import { MetronomeEngine } from '../audio/engine';
-import { newSong, normalizeSong, normalizeTrack, songPosition, songTransport, type Marker, type Song } from '../song';
+import {
+  barsToCover,
+  newSong,
+  normalizeSong,
+  normalizeTrack,
+  songLengthMs,
+  songPosition,
+  songTransport,
+  type Marker,
+  type Song,
+} from '../song';
 import { beatAt } from '../timeline';
 import { audioDurationMs, getTrack, putTrack, trackId } from '../tracks';
 
@@ -89,6 +99,43 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
   const applyBpm = $('edApplyBpm');
   let found: BeatAnalysis | null = null;
 
+  // ---- Song length vs audio: the click stops after the last bar ----
+  const barsInput = $<HTMLInputElement>('edBars');
+  /** Audio after bar 1 (ms), from the longest file. */
+  const audioAfterBar1 = () => {
+    if (!draft.track) return 0;
+    const longest = Math.max(...draft.track.files.map((f) => f.durationMs));
+    return longest - (Number(offsetInput.value) || 0) * 1000;
+  };
+  const updateLength = () => {
+    const info = $('edLengthInfo');
+    const fit = $('edFitLength');
+    if (!draft.track) {
+      info.textContent = '';
+      fit.classList.add('hidden');
+      return;
+    }
+    const click = songLengthMs(readDraft());
+    const audio = audioAfterBar1();
+    const short = click < audio - 2000;
+    info.textContent = `Click: ${formatDuration(click)} · negativ: ${formatDuration(audio)}${short ? ' — click-ul se oprește înainte de finalul negativului!' : ''}`;
+    info.classList.toggle('text-red-400', short);
+    info.classList.toggle('text-neutral-400', !short);
+    fit.classList.toggle('hidden', !short);
+  };
+  /** Sets the bar count so the click lasts as long as the audio (only ever lengthens). */
+  const fitLength = () => {
+    if (!draft.track) return;
+    const song = readDraft();
+    if (songLengthMs(song) >= audioAfterBar1() - 2000) return updateLength();
+    barsInput.value = String(barsToCover(song, audioAfterBar1()));
+    updateLength();
+  };
+  $('edFitLength').onclick = fitLength;
+  barsInput.oninput = updateLength;
+  list.oninput = updateLength;
+  offsetInput.oninput = updateLength;
+
   const paint = (status?: string) => {
     trackName.textContent = status ?? '';
     renderFiles();
@@ -97,6 +144,7 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
     follow.checked = !!draft.track?.follow && !follow.disabled;
     // A fixed BPM is only offered when it can actually hold for the whole song.
     applyBpm.classList.toggle('hidden', !found || !isSteady(found.maxDeviationMs));
+    updateLength();
   };
 
   /** One row per file: label, default volume, "used for tempo", remove. */
@@ -166,6 +214,7 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
   };
   analysisText.textContent = describe();
   paint();
+  updateLength();
 
   fileInput.value = '';
   fileInput.onchange = async () => {
@@ -188,6 +237,7 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
         analysisText.textContent = '';
       }
       paint();
+      fitLength();
     } catch {
       paint('Fișierul nu a putut fi citit ca audio');
     }
@@ -223,6 +273,7 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
     }
     btn.disabled = false;
     paint();
+    fitLength();
   };
 
   applyBpm.onclick = () => {
@@ -236,6 +287,7 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
     offsetInput.value = String(Math.round(fit.offset + Math.round((cur - fit.offset) / fit.period) * fit.period) / 1000);
     draft.track.follow = false;
     paint();
+    fitLength();
     void restartPreview();
   };
 
@@ -250,6 +302,7 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
 
   follow.onchange = () => {
     if (draft.track) draft.track.follow = follow.checked;
+    updateLength();
     void restartPreview();
   };
 
@@ -272,6 +325,7 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
         next = cur + Number(step);
       }
       offsetInput.value = String(Math.round(next) / 1000);
+      updateLength();
       void restartPreview();
     };
   }

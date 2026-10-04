@@ -357,3 +357,20 @@ function withSteadyIntro(song: Song, raw: number[], b0: number): number[] {
   const intro = Array.from({ length: k0 }, (_, k) => anchor + slope * (k - k0));
   return [...intro, ...tail];
 }
+
+/** How long the click runs from bar 1 to the end of the song, in ms. */
+export function songLengthMs(song: Song): number {
+  const t = songTransport(song, 0, 0);
+  const s = [...t.segments].reverse().find((x) => x.beat <= t.endBeat!)!;
+  return s.t + beatOffset(s, t.endBeat! - s.beat) - t.song!.bar1At;
+}
+
+/** Smallest number of bars whose click covers `audioMs` of audio after bar 1. */
+export function barsToCover(song: Song, audioMs: number): number {
+  let bars = Math.max(1, song.bars);
+  const len = (b: number) => songLengthMs({ ...song, bars: b });
+  // Grow fast, then step back down to the shortest length that still covers the audio.
+  while (len(bars) < audioMs && bars < 2000) bars = Math.min(2000, Math.ceil(bars * 1.5) + 1);
+  while (bars > 1 && len(bars - 1) >= audioMs) bars--;
+  return bars;
+}
