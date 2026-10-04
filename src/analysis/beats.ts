@@ -306,6 +306,22 @@ export function repairWeakRegions(beats: number[], strength: number[]): { beats:
     return w[w.length >> 1];
   });
   const weak = local.map((v) => v < 0.4 * typical);
+  // A band does not change tempo by more than a few % from one beat to the next:
+  // such jumps are the tracker catching up after following the wrong notes.
+  const iv = beats.slice(1).map((b, i) => b - beats[i]);
+  iv.forEach((v, i) => {
+    const w = iv.slice(Math.max(0, i - 4), i + 5).sort((a, b) => a - b);
+    const med = w[w.length >> 1];
+    if (Math.abs(v - med) / med > 0.08) weak[i] = weak[i + 1] = true;
+  });
+  // Short confident stretches between unreliable ones are not trusted either.
+  for (let i = 0; i < n; i++) {
+    if (weak[i]) continue;
+    let j = i;
+    while (j + 1 < n && !weak[j + 1]) j++;
+    if (i > 0 && j < n - 1 && j - i + 1 <= 3) for (let k = i; k <= j; k++) weak[k] = true;
+    i = j;
+  }
   const out = [...beats];
   let extrapolated = 0;
   for (let i = 0; i < n; ) {

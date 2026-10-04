@@ -239,6 +239,15 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
     void restartPreview();
   };
 
+  const steady = $<HTMLInputElement>('edSteadyBar');
+  steady.value = draft.track?.steadyFromBar ? String(draft.track.steadyFromBar) : '';
+  steady.onchange = () => {
+    if (!draft.track) return;
+    const bar = Math.round(Number(steady.value));
+    draft.track.steadyFromBar = bar > 1 ? bar : undefined;
+    void restartPreview();
+  };
+
   follow.onchange = () => {
     if (draft.track) draft.track.follow = follow.checked;
     void restartPreview();

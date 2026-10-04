@@ -146,3 +146,26 @@ describe('songs with several audio files', () => {
     expect(trackPositionAt(t.song!, 3000)).toBe(500);
   });
 });
+
+describe('drums come in later (steadyFromBar)', () => {
+  // Steady band from beat 16 on; the 16 intro beats were detected wandering up to ±70 ms.
+  const beats = Array.from({ length: 80 }, (_, i) => 500 + i * 627 + (i < 16 ? 70 * Math.sin(i / 3) : 0));
+  const base: Song = {
+    ...song,
+    bars: 20,
+    countInBars: 1,
+    markers: [{ bar: 1, bpm: 96, beatsPerBar: 4 }],
+    track: { files: [{ id: 'o', name: 'o', label: 'Original', durationMs: 60000, volume: 0 }], offsetMs: 500, beats, follow: true },
+  };
+  const errAt = (t: ReturnType<typeof songTransport>, k: number) => trackPositionAt(t.song!, tickAt(t, 1, k).time)! - (500 + k * 627);
+
+  it('without it the intro clicks follow the wandering detections', () => {
+    const t = songTransport(base, 0, 1);
+    expect(Math.max(...Array.from({ length: 16 }, (_, k) => Math.abs(errAt(t, k))))).toBeGreaterThan(30);
+  });
+
+  it('with it the intro takes the tempo of the bars where the drums play', () => {
+    const t = songTransport({ ...base, track: { ...base.track!, steadyFromBar: 5 } }, 0, 1);
+    for (let k = 0; k < 40; k++) expect(Math.abs(errAt(t, k))).toBeLessThan(3);
+  });
+});

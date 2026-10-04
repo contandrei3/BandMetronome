@@ -57,6 +57,12 @@ export interface TrackRef {
    * recordings made without a click, whose tempo drifts.
    */
   follow?: boolean;
+  /**
+   * Bar (1-based) where the beat becomes clear, e.g. where the drums come in.
+   * Bars before it take the tempo of the bars that follow instead of the
+   * beats detected there (a guitar-only intro misleads the detection).
+   */
+  steadyFromBar?: number;
 }
 
 /** Songs saved before multi-file support had one file described inline on the track. */
@@ -286,11 +292,12 @@ function markerSegments(song: Song): Segment[] {
  * markers. Past the last detected beat the last bar's tempo continues.
  */
 function beatMapSegments(song: Song): { segs: Segment[]; offsetMs: number } {
-  const beats = smoothBeats(song.track!.beats!);
+  const raw = [...song.track!.beats!];
   let b0 = 0;
-  for (let i = 1; i < beats.length; i++) {
-    if (Math.abs(beats[i] - song.track!.offsetMs) < Math.abs(beats[b0] - song.track!.offsetMs)) b0 = i;
+  for (let i = 1; i < raw.length; i++) {
+    if (Math.abs(raw[i] - song.track!.offsetMs) < Math.abs(raw[b0] - song.track!.offsetMs)) b0 = i;
   }
+  const beats = withSteadyIntro(song, raw, b0);
   const meterAt = (bar: number) => {
     let bpb = 4;
     let unit = 4;
@@ -316,4 +323,37 @@ function beatMapSegments(song: Song): { segs: Segment[]; offsetMs: number } {
     beat += bpb;
   }
   return { segs, offsetMs: beats[b0] };
+}
+
+/**
+ * Smoothed beats. With `steadyFromBar`, the beats from that bar on are
+ * smoothed on their own and the ones before it are replaced by their tempo
+ * (8 bars of reference) extended backwards, anchored where the drums come in:
+ * the misleading intro detections then influence nothing.
+ */
+function withSteadyIntro(song: Song, raw: number[], b0: number): number[] {
+  const from = song.track?.steadyFromBar;
+  let k0 = b0;
+  for (let bar = 0; from && bar < from - 1; bar++) {
+    let bpb = 4;
+    for (const m of song.markers) if (m.bar - 1 <= bar && m.beatsPerBar !== undefined) bpb = m.beatsPerBar;
+    k0 += bpb;
+  }
+  if (!from || from <= 1 || k0 <= 0 || raw.length - k0 < 8) return smoothBeats(raw);
+  const tail = smoothBeats(raw.slice(k0));
+  const ref = tail.slice(0, 32);
+  const n = ref.length;
+  const mx = (n - 1) / 2;
+  const my = ref.reduce((a, v) => a + v, 0) / n;
+  let sxx = 0;
+  let sxy = 0;
+  ref.forEach((v, j) => {
+    sxx += (j - mx) ** 2;
+    sxy += (j - mx) * (v - my);
+  });
+  const slope = sxy / sxx;
+  const near = ref.slice(0, 8);
+  const anchor = near.reduce((a, v, j) => a + v - slope * j, 0) / near.length;
+  const intro = Array.from({ length: k0 }, (_, k) => anchor + slope * (k - k0));
+  return [...intro, ...tail];
 }
