@@ -756,6 +756,15 @@ function initPersonal() {
     b.addEventListener('click', () => setLatency(settings.latencyMs + Number(b.dataset.lat)));
   }
   setLatency(settings.latencyMs);
+  const paintVisual = () => ($('visualDelay').textContent = `${settings.visualDelayMs > 0 ? '+' : ''}${settings.visualDelayMs} ms`);
+  for (const b of document.querySelectorAll<HTMLButtonElement>('.visBtn')) {
+    b.addEventListener('click', () => {
+      settings.visualDelayMs = Math.max(-300, Math.min(300, settings.visualDelayMs + Number(b.dataset.vis)));
+      saveSettings(settings);
+      paintVisual();
+    });
+  }
+  paintVisual();
   $('calibrate').addEventListener('click', () => void startCalibration());
 }
 initPersonal();
@@ -853,7 +862,8 @@ function frame() {
     if (mode === 'songs' && currentSong && library.setlist.includes(currentSong.id)) stepSetlist(1);
   }
 
-  const b = calibrating || !transportApplied ? null : beatAt(transport, now);
+  // The flash follows the beat as heard: shifted only by this phone's own display adjustment.
+  const b = calibrating || !transportApplied ? null : beatAt(transport, now - settings.visualDelayMs);
   const song = transport.song;
   const pos = b && song ? songPosition(song, b.bar, settings.role) : null;
   const preRoll = !!pos && pos.barsToNext === 1;
@@ -905,11 +915,14 @@ function frame() {
   const bpm = bpmAt(transport, now);
   $('tempoInfo').textContent = `${Number.isInteger(bpm) ? bpm : bpm.toFixed(1)} BPM · ${seg.beatsPerBar}/${seg.beatUnit ?? 4}`;
 
+  const uncalibrated = settings.latencyMs === 0 ? ' · ⚠ latența căștilor e 0 (Setări → calibrare)' : '';
   if (client) {
     const s = client.sync.stats();
-    $('syncInfo').textContent = client.sync.locked
-      ? `sincronizat ±${fmt(s.jitter / 2)} ms · rtt ${fmt(s.minRtt)} ms`
-      : `sincronizare ceas… (${s.samples})`;
+    $('syncInfo').textContent =
+      (client.sync.locked ? `sincronizat ±${fmt(s.jitter / 2)} ms · rtt ${fmt(s.minRtt)} ms` : `sincronizare ceas… (${s.samples})`) +
+      uncalibrated;
+  } else {
+    $('syncInfo').textContent = uncalibrated.replace(' · ', '');
   }
 }
 requestAnimationFrame(frame);

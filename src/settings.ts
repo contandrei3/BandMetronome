@@ -14,6 +14,8 @@ export interface Settings {
   subdivision: Subdivision;
   /** Bluetooth/output latency compensation for this phone + headphones, in ms. */
   latencyMs: number;
+  /** Shifts only the on-screen flash (positive = later), to match this phone's display lag. */
+  visualDelayMs: number;
   /** Master only: free tempo or songs, and the last loaded song. */
   masterMode: 'free' | 'songs';
   lastSongId: string | null;
@@ -21,7 +23,7 @@ export interface Settings {
 
 const KEY = 'bandmetro.settings.v1';
 
-const DEFAULTS: Settings = { role: null, sound: 'click', volume: 0.8, trackVolume: 0.8, fileVolumes: {}, subdivision: 1, latencyMs: 0, masterMode: 'free', lastSongId: null };
+const DEFAULTS: Settings = { role: null, sound: 'click', volume: 0.8, trackVolume: 0.8, fileVolumes: {}, subdivision: 1, latencyMs: 0, visualDelayMs: 0, masterMode: 'free', lastSongId: null };
 
 export function loadSettings(): Settings {
   try {
