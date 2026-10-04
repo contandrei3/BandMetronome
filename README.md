@@ -54,6 +54,16 @@ existente pe dispozitiv sunt urcate automat dacă baza de date e goală.
   corectată continuu (viteză ±0,2%, inaudibil) ca să rămână la câteva ms de click. „Volum negativ” e separat.
 - Cine a adăugat fișierul trebuie să fie în sesiune o dată, ca ceilalți să-l primească; apoi îl au toți.
 
+### Mai multe piste pe piesă (ex. voce extrasă + original pentru tempo)
+
+- În editor, „+ Adaugă fișier audio” de câte ori e nevoie. Fiecare fișier are un nume („Voce”, „Original”,
+  „Negativ”…), un volum de pornire și poate fi marcat „pentru tempo” (din el se detectează tempo-ul și măsura 1).
+- Toate fișierele unei piese merg pe aceeași axă de timp: piste extrase (ex. cu UVR5 / Demucs) din aceeași
+  înregistrare se aliniază automat.
+- Exemplu: „Original” cu volum 0 (doar pentru tempo) + „Voce” la 100%.
+- Fiecare membru își reglează volumul fiecărei piste în „Mixul meu” (se ține minte pe telefon). Pistele lăsate
+  pe 0 se descarcă, dar nu se încarcă în memorie; sunt decodate mono la 32 kHz ca să încapă mai multe pe telefon.
+
 ### Aliniere click ↔ negativ
 
 1. **🔍 Detectează tempo-ul**: găsește bătăile din audio, BPM-ul exact (cu zecimale) și timpul 1 al măsurii

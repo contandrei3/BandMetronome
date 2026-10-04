@@ -164,9 +164,10 @@
                   <input id="volume" type="range" min="0" max="1" step="0.01" class="w-full accent-amber-500" />
                 </label>
                 <label class="flex items-center gap-3">
-                  <span class="shrink-0 text-neutral-400">Volum negativ</span>
+                  <span class="shrink-0 text-neutral-400">Volum negative (toate)</span>
                   <input id="trackVolume" type="range" min="0" max="1" step="0.01" class="w-full accent-amber-500" />
                 </label>
+                <div id="trackMix" class="hidden flex-col gap-2 rounded-xl bg-neutral-900/50 p-3"></div>
                 <div>
                   <span class="text-neutral-400">Subdiviziune</span>
                   <div id="subdivisions" class="mt-2 grid grid-cols-4 gap-2"></div>
@@ -253,12 +254,16 @@
             <input id="edCountIn" type="number" inputmode="numeric" min="0" max="4" class="mt-1 w-full rounded-xl bg-neutral-900 px-3 py-2 text-lg text-neutral-100" />
           </label>
         </div>
-        <h3 class="mt-2 font-bold">Negativ (opțional)</h3>
+        <h3 class="mt-2 font-bold">Negative și piste audio (opțional)</h3>
         <div class="flex flex-col gap-3 rounded-xl bg-neutral-950 p-3 ring-1 ring-neutral-800">
+          <p class="text-xs leading-relaxed text-neutral-500">
+            Poți pune mai multe fișiere din aceeași înregistrare, ex. „Voce” (extrasă) și „Original” (doar pentru tempo, volum 0).
+            Volumul de aici e cel de pornire; fiecare membru și-l reglează apoi în „Mixul meu”.
+          </p>
+          <div id="edFiles" class="flex flex-col gap-2"></div>
           <div class="flex items-center gap-2">
-            <label class="shrink-0 cursor-pointer rounded-xl bg-neutral-900 px-3 py-2 font-bold ring-1 ring-neutral-700">🎧 Alege fișier<input id="edTrackFile" type="file" accept="audio/*" class="hidden" /></label>
+            <label class="shrink-0 cursor-pointer rounded-xl bg-neutral-900 px-3 py-2 font-bold ring-1 ring-neutral-700">🎧 + Adaugă fișier audio<input id="edTrackFile" type="file" accept="audio/*" class="hidden" /></label>
             <span id="edTrackName" class="min-w-0 flex-1 truncate text-sm text-neutral-400"></span>
-            <button id="edTrackRemove" class="h-10 w-10 shrink-0 rounded-lg bg-neutral-900" aria-label="Scoate negativul">✕</button>
           </div>
           <label class="flex items-center justify-between gap-3 text-sm text-neutral-400">
             <span>Măsura 1 începe în fișier la (secunde)</span>
@@ -315,7 +320,7 @@
       </div>
     </div>
 
-    <pre id="errors" class="fixed inset-x-0 bottom-0 z-50 hidden max-h-40 overflow-auto whitespace-pre-wrap bg-red-950/95 p-3 font-mono text-xs text-red-200"></pre>
+    <pre id="errors" title="Atinge pentru a închide" class="fixed inset-x-0 bottom-0 z-50 hidden max-h-40 cursor-pointer overflow-auto whitespace-pre-wrap bg-red-950/95 p-3 font-mono text-xs text-red-200"></pre>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

@@ -80,22 +80,42 @@ export class MetronomeEngine {
     });
   }
 
-  /** Backing-track volume, separate from the click. */
+  /** Volume of all backing tracks together, separate from the click. */
   set trackVolume(v: number) {
     this.track.gain.gain.setTargetAtTime(v, this.ctx.currentTime, 0.02);
+  }
+
+  /** Volume of one backing-track file (this member's own mix). */
+  setFileVolume(id: string, v: number): void {
+    this.track.setVolume(id, v);
   }
 
   hasTrack(id: string): boolean {
     return this.track.has(id);
   }
 
-  /** Decodes and keeps a backing track; it starts by itself when its song plays. */
+  /** Releases decoded files that are not in `ids` (another song, or turned down to 0). */
+  keepTracks(ids: Set<string>): void {
+    this.track.keepOnly(ids);
+  }
+
+  /**
+   * Decodes a backing-track file; it starts by itself when its song plays.
+   * Kept as mono at 32 kHz: in-ear guide tracks lose nothing audible and a
+   * five-minute file takes ~40 MB instead of ~115 MB, so several fit on a phone.
+   */
   async addTrack(id: string, data: ArrayBuffer): Promise<void> {
     if (this.track.has(id)) return;
-    const buffer = await this.ctx.decodeAudioData(data.slice(0));
+    const decoded = await new OfflineAudioContext(1, 1, 32000).decodeAudioData(data.slice(0));
+    const mono = this.ctx.createBuffer(1, decoded.length, decoded.sampleRate);
+    const out = mono.getChannelData(0);
+    for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
+      const d = decoded.getChannelData(ch);
+      for (let i = 0; i < d.length; i++) out[i] += d[i] / decoded.numberOfChannels;
+    }
     // Another song may have been loaded while this one was decoding.
-    if (this.transport?.song?.track?.id !== id) return;
-    this.track.add(id, buffer);
+    if (!this.transport?.song?.track?.files.some((f) => f.id === id)) return;
+    this.track.add(id, mono);
     this.track.update(this.transport);
   }
 

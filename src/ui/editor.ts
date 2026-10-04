@@ -1,7 +1,7 @@
 import { ROLES, type Role } from '../roles';
 import { analyzeBeats, decodeForAnalysis, fitGrid, tempoRange, type BeatAnalysis } from '../analysis/beats';
 import { MetronomeEngine } from '../audio/engine';
-import { newSong, normalizeSong, songPosition, songTransport, type Marker, type Song } from '../song';
+import { newSong, normalizeSong, normalizeTrack, songPosition, songTransport, type Marker, type Song } from '../song';
 import { beatAt } from '../timeline';
 import { audioDurationMs, getTrack, putTrack, trackId } from '../tracks';
 
@@ -17,6 +17,7 @@ const INPUT = 'rounded-lg bg-neutral-900 px-2 py-2 text-center';
 /** Opens the full-screen song editor; `song` is null for a new one. */
 export function openEditor(song: Song | null, h: EditorHandlers, canPreview: () => boolean = () => true): void {
   const draft: Song = structuredClone(song ?? newSong());
+  draft.track = normalizeTrack(draft.track);
   const isNew = !song;
   $<HTMLInputElement>('edTitle').value = draft.title;
   $<HTMLInputElement>('edArtist').value = draft.artist;
@@ -89,15 +90,70 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
   let found: BeatAnalysis | null = null;
 
   const paint = (status?: string) => {
-    trackName.textContent =
-      status ?? (draft.track ? `${draft.track.name} · ${formatDuration(draft.track.durationMs)}` : 'Niciun fișier');
-    $('edTrackRemove').classList.toggle('invisible', !draft.track);
+    trackName.textContent = status ?? '';
+    renderFiles();
     show($('edTrackTools'), !!draft.track);
     follow.disabled = !draft.track?.beats?.length;
     follow.checked = !!draft.track?.follow && !follow.disabled;
     // A fixed BPM is only offered when it can actually hold for the whole song.
     applyBpm.classList.toggle('hidden', !found || !isSteady(found.maxDeviationMs));
   };
+
+  /** One row per file: label, default volume, "used for tempo", remove. */
+  const renderFiles = () => {
+    const box = $('edFiles');
+    box.innerHTML = '';
+    const files = draft.track?.files ?? [];
+    for (const f of files) {
+      const row = document.createElement('div');
+      row.className = 'flex flex-col gap-2 rounded-lg bg-neutral-900/60 p-2';
+      row.innerHTML = `
+        <div class="flex items-center gap-2">
+          <input data-f="label" class="w-32 rounded-lg bg-neutral-900 px-2 py-2 font-bold" placeholder="Nume (ex: Voce)">
+          <span data-f="name" class="min-w-0 flex-1 truncate text-xs text-neutral-500"></span>
+          <button data-f="remove" class="h-9 w-9 shrink-0 rounded-lg bg-neutral-900" aria-label="Scoate fișierul">✕</button>
+        </div>
+        <div class="flex flex-wrap items-center gap-3 text-sm text-neutral-400">
+          <label class="flex min-w-0 flex-1 items-center gap-2">Volum<input data-f="volume" type="range" min="0" max="1" step="0.05" class="w-full accent-amber-500"><span data-f="pct" class="w-10 font-mono text-xs"></span></label>
+          <label class="flex items-center gap-1"><input data-f="tempo" type="radio" name="edTempoFile" class="h-4 w-4 accent-amber-500"> pentru tempo</label>
+        </div>`;
+      const q = <T extends HTMLElement>(n: string) => row.querySelector<T>(`[data-f="${n}"]`)!;
+      q<HTMLInputElement>('label').value = f.label;
+      q('name').textContent = `${f.name} · ${formatDuration(f.durationMs)}`;
+      q<HTMLInputElement>('volume').value = String(f.volume);
+      q('pct').textContent = f.volume === 0 ? 'mut' : `${Math.round(f.volume * 100)}%`;
+      q<HTMLInputElement>('tempo').checked = draft.track!.tempoFile === f.id;
+      q<HTMLInputElement>('label').oninput = (e) => (f.label = (e.target as HTMLInputElement).value.trim() || 'Pistă');
+      q<HTMLInputElement>('volume').oninput = (e) => {
+        f.volume = Number((e.target as HTMLInputElement).value);
+        q('pct').textContent = f.volume === 0 ? 'mut' : `${Math.round(f.volume * 100)}%`;
+      };
+      q<HTMLInputElement>('tempo').onchange = () => {
+        draft.track!.tempoFile = f.id;
+        // Beats came from another file: detect again from this one.
+        draft.track!.beats = undefined;
+        draft.track!.follow = false;
+        found = null;
+        analysisText.textContent = 'Fișierul pentru tempo s-a schimbat: apasă din nou „Detectează tempo-ul”.';
+        paint();
+      };
+      q('remove').onclick = () => {
+        draft.track!.files = draft.track!.files.filter((x) => x !== f);
+        if (draft.track!.files.length === 0) {
+          draft.track = undefined;
+          found = null;
+          analysisText.textContent = '';
+        } else if (draft.track!.tempoFile === f.id) {
+          draft.track!.tempoFile = draft.track!.files[0].id;
+          draft.track!.beats = undefined;
+          draft.track!.follow = false;
+        }
+        paint();
+      };
+      box.append(row);
+    }
+  };
+
   const describe = () => {
     const beats = draft.track?.beats;
     if (!beats?.length) return '';
@@ -120,20 +176,22 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
       const data = await file.arrayBuffer();
       const [id, durationMs] = await Promise.all([trackId(data), audioDurationMs(data)]);
       await putTrack(id, data);
-      draft.track = { id, name: file.name, offsetMs: 0, durationMs };
-      offsetInput.value = '0';
-      found = null;
-      analysisText.textContent = '';
+      const first = !draft.track;
+      draft.track ??= { files: [], offsetMs: 0 };
+      if (!draft.track.files.some((f) => f.id === id)) {
+        draft.track.files.push({ id, name: file.name, label: guessLabel(file.name, first), durationMs, volume: 1 });
+      }
+      draft.track.tempoFile ??= id;
+      if (first) {
+        offsetInput.value = '0';
+        found = null;
+        analysisText.textContent = '';
+      }
       paint();
     } catch {
       paint('Fișierul nu a putut fi citit ca audio');
     }
-  };
-  $('edTrackRemove').onclick = () => {
-    draft.track = undefined;
-    found = null;
-    analysisText.textContent = '';
-    paint();
+    fileInput.value = '';
   };
 
   $('edAnalyze').onclick = async () => {
@@ -143,7 +201,7 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
     analysisText.textContent = 'Analizez negativul… (câteva secunde)';
     await new Promise((r) => setTimeout(r, 30)); // let the message show before the heavy work
     try {
-      const data = await getTrack(draft.track.id);
+      const data = await getTrack(draft.track.tempoFile ?? draft.track.files[0].id);
       if (!data) throw new Error('fișierul nu e pe acest dispozitiv');
       const first = readDraft().markers[0];
       found = analyzeBeats(await decodeForAnalysis(data), first?.bpm, first?.beatsPerBar ?? 4);
@@ -216,15 +274,17 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
       posText.textContent = 'Oprește întâi metronomul din sesiune.';
       return;
     }
-    const data = await getTrack(draft.track.id);
-    if (!data) return;
     const engine = new MetronomeEngine();
     preview = { engine, raf: 0 };
     await engine.start();
     engine.latencyMs = 0; // click and track go through the same output: no compensation needed
     const t = songTransport(readDraft(), performance.now() + 400, 1, fromBar);
     engine.setTransport(t);
-    await engine.addTrack(draft.track.id, data);
+    for (const f of draft.track.files) {
+      engine.setFileVolume(f.id, f.volume);
+      const data = f.volume > 0 ? await getTrack(f.id) : undefined;
+      if (data) await engine.addTrack(f.id, data);
+    }
     previewBtn.textContent = '■ Oprește';
     const tick = () => {
       if (!preview) return;
@@ -265,6 +325,16 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
 /** Under this, one BPM keeps every beat within ~25 ms of the recording for the whole song. */
 function isSteady(maxDeviationMs: number): boolean {
   return maxDeviationMs < 25;
+}
+
+/** "vocals.wav" -> "Voce", "...instrumental..." -> "Negativ"; the first file of a song defaults to "Original". */
+function guessLabel(name: string, first: boolean): string {
+  const n = name.toLowerCase();
+  if (/vocal|voce|voice/.test(n)) return 'Voce';
+  if (/instrumental|negativ|karaoke|backing|minus/.test(n)) return 'Negativ';
+  if (/drum|tobe/.test(n)) return 'Tobe';
+  if (/bass|bas/.test(n)) return 'Bas';
+  return first ? 'Original' : 'Pistă';
 }
 
 function nearest(xs: number[], x: number): number {

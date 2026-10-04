@@ -41,8 +41,8 @@ export interface SongInfo {
   cues: Cue[];
   /** Master time at which song bar 1 starts (or would have, when starting later in the song). */
   bar1At: number;
-  /** Backing track; every device plays its own copy in sync with the click. */
-  track?: { id: string; offsetMs: number };
+  /** Backing tracks; every device plays its own copies in sync with the click, mixed to taste. */
+  track?: { offsetMs: number; files: { id: string; label: string; volume: number }[] };
 }
 
 export interface Cue {

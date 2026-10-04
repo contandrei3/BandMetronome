@@ -10,7 +10,7 @@ import { MasterTracks, MemberTracks, type TrackEvents } from './net/trackShare';
 import { cueIsFor, roleInfo, ROLES, type Role } from './roles';
 import { parseRoute, routeHash, type Route } from './route';
 import { loadSettings, saveSettings } from './settings';
-import { describeChange, songPosition, songTransport, type Song } from './song';
+import { describeChange, normalizeTrack, songPosition, songTransport, type Song } from './song';
 import { LocalLibraryStore, type Library, type LibraryStore } from './store';
 import {
   beatAt,
@@ -52,11 +52,20 @@ let transportApplied = false;
 $('version').textContent = `versiune ${__BUILD__}`;
 
 // Any unexpected error is shown on screen: there is no console on a phone at rehearsal.
+let errorTimer: number | undefined;
 const reportError = (msg: string) => {
   const box = $('errors');
   box.classList.remove('hidden');
   box.textContent = `${box.textContent}\n${new Date().toLocaleTimeString()} ${msg}`.trim();
+  // Never cover the controls for long: hides after 10 s, or on tap.
+  clearTimeout(errorTimer);
+  errorTimer = window.setTimeout(hideErrors, 10000);
 };
+function hideErrors() {
+  $('errors').classList.add('hidden');
+  $('errors').textContent = '';
+}
+$('errors').addEventListener('click', hideErrors);
 window.addEventListener('error', (e) => reportError(e.message));
 window.addEventListener('unhandledrejection', (e) => reportError(String(e.reason?.message ?? e.reason)));
 
@@ -411,10 +420,23 @@ function setConnState(s: ConnState, detail?: string) {
 /** Per-file state for the on-screen status: download progress, or ready. */
 const trackState = new Map<string, number | 'ready'>();
 
+type SongFile = { id: string; label: string; volume: number };
+
+/** This member's volume for a file: their own setting, else the song's default. */
+function fileVolume(f: SongFile): number {
+  return settings.fileVolumes[f.id] ?? f.volume;
+}
+
+function currentFiles(): SongFile[] {
+  return transport.song?.track?.files ?? [];
+}
+
 const trackEvents: TrackEvents = {
   onStored(id, data) {
     trackState.set(id, 'ready');
-    if (transport.song?.track?.id === id) void engine?.addTrack(id, data);
+    // Decode only what this member will actually hear (memory on phones).
+    const f = currentFiles().find((x) => x.id === id);
+    if (f && fileVolume(f) > 0) void engine?.addTrack(id, data);
     renderTrackInfo();
   },
   onProgress(id, fraction) {
@@ -423,23 +445,33 @@ const trackEvents: TrackEvents = {
   },
 };
 
-/** Decodes the loaded song's track, fetching it from the session if this device lacks it. */
+/**
+ * Gets the loaded song's files ready: every file is fetched to this device (so
+ * turning one up later is instant), only the audible ones are decoded.
+ */
 function loadTrackFor(t: Transport) {
-  const id = t.song?.track?.id;
+  const files = t.song?.track?.files ?? [];
   renderTrackInfo();
-  if (!id || !engine || engine.hasTrack(id)) return;
-  void getTrack(id).then((data) => {
-    if (data) return trackEvents.onStored(id, data);
-    if (master) void master.tracks?.fetch(id);
-    else void client?.tracks?.need(id);
-  });
+  renderTrackMix();
+  if (!engine) return;
+  const e = engine;
+  e.keepTracks(new Set(files.filter((f) => fileVolume(f) > 0).map((f) => f.id)));
+  for (const f of files) {
+    e.setFileVolume(f.id, fileVolume(f));
+    if (e.hasTrack(f.id)) continue;
+    void getTrack(f.id).then((data) => {
+      if (data) return trackEvents.onStored(f.id, data);
+      if (master) void master.tracks?.fetch(f.id);
+      else void client?.tracks?.need(f.id);
+    });
+  }
 }
 
-/** Tells members which tracks the setlist (and the loaded song) need, so they download early. */
+/** Tells members which files the setlist (and the loaded song) need, so they download early. */
 function announceTracks() {
   if (!master) return;
   const ids = new Set<string>();
-  const add = (s: Song | undefined) => s?.track && ids.add(s.track.id);
+  const add = (s: Song | undefined) => s?.track && normalizeTrack(s.track)?.files.forEach((f) => ids.add(f.id));
   for (const id of library.setlist) add(library.songs.find((s) => s.id === id));
   add(currentSong ?? undefined);
   master.prefetch([...ids]);
@@ -453,15 +485,47 @@ function announceTracks() {
 }
 
 function renderTrackInfo() {
-  const id = transport.song?.track?.id;
-  const st = id ? trackState.get(id) : undefined;
-  $('trackInfo').textContent = !id
-    ? ''
-    : st === 'ready'
-      ? '🎧 Negativ pregătit'
-      : typeof st === 'number'
-        ? `🎧 Negativ: se descarcă ${Math.round(st * 100)}%`
-        : '🎧 Negativ: caut fișierul la ceilalți… (cine l-a adăugat trebuie să fie în sesiune)';
+  const files = currentFiles();
+  const parts = files.map((f) => {
+    const st = trackState.get(f.id);
+    return `${f.label} ${st === 'ready' ? '✓' : typeof st === 'number' ? `${Math.round(st * 100)}%` : '…'}`;
+  });
+  const missing = files.some((f) => trackState.get(f.id) === undefined);
+  $('trackInfo').textContent = files.length
+    ? `🎧 ${parts.join(' · ')}${missing ? ' (caut fișierele la ceilalți din sesiune)' : ''}`
+    : '';
+}
+
+/** One volume slider per file of the loaded song, in "Mixul meu". */
+function renderTrackMix() {
+  const box = $('trackMix');
+  const files = currentFiles();
+  const key = files.map((f) => f.id + f.label).join('|');
+  if (box.dataset.key === key) return;
+  box.dataset.key = key;
+  box.innerHTML = '';
+  show(box, files.length > 0);
+  for (const f of files) {
+    const row = document.createElement('label');
+    row.className = 'flex items-center gap-3';
+    row.innerHTML =
+      '<span class="w-24 shrink-0 truncate text-neutral-300"></span><input type="range" min="0" max="1" step="0.01" class="w-full accent-amber-500" /><span class="w-10 text-right font-mono text-xs text-neutral-500"></span>';
+    const [name, slider, pct] = [...row.children] as [HTMLElement, HTMLInputElement, HTMLElement];
+    name.textContent = f.label;
+    slider.value = String(fileVolume(f));
+    pct.textContent = `${Math.round(fileVolume(f) * 100)}%`;
+    slider.addEventListener('input', () => {
+      const v = Number(slider.value);
+      const wasSilent = fileVolume(f) === 0;
+      settings.fileVolumes[f.id] = v;
+      saveSettings(settings);
+      pct.textContent = `${Math.round(v * 100)}%`;
+      engine?.setFileVolume(f.id, v);
+      // Turned up from 0: decode it now; turned down to 0: free its memory.
+      if (wasSilent !== (v === 0)) loadTrackFor(transport);
+    });
+    box.append(row);
+  }
 }
 
 // ---------- Master controls ----------
@@ -768,6 +832,8 @@ function frame() {
   if (client && !transportApplied && client.sync.locked && client.transport) {
     transportApplied = true;
     engine.setTransport(transport);
+    // Files that arrived before the clock was locked are decoded now, before START.
+    loadTrackFor(transport);
   }
 
   const calibrating = !$('calOverlay').classList.contains('hidden');

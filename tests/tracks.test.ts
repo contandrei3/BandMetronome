@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { rebaseTransport } from '../src/masterState';
-import { songTransport, type Song } from '../src/song';
+import { normalizeTrack, songTransport, type Song } from '../src/song';
 import { trackPositionAt, trackStartAt } from '../src/tracks';
 import { tickAt } from '../src/timeline';
 import { smoothBeats, tempoRange } from '../src/analysis/beats';
@@ -13,7 +13,7 @@ const song: Song = {
   countInBars: 1,
   updatedAt: 0,
   markers: [{ bar: 1, bpm: 120, beatsPerBar: 4 }],
-  track: { id: 'abc', name: 'a.mp3', offsetMs: 500, durationMs: 20000 },
+  track: { files: [{ id: 'abc', name: 'a.mp3', label: 'Negativ', durationMs: 20000, volume: 1 }], offsetMs: 500 },
 };
 
 describe('backing track timing', () => {
@@ -53,7 +53,7 @@ describe('following the backing track tempo', () => {
     bars: 8,
     countInBars: 1,
     markers: [{ bar: 1, bpm: 96, beatsPerBar: 4 }],
-    track: { id: 'abc', name: 'a.mp3', offsetMs: 3000, durationMs: 60000, beats, follow: true },
+    track: { files: [{ id: 'abc', name: 'a.mp3', label: 'Original', durationMs: 60000, volume: 0 }], offsetMs: 3000, beats, follow: true },
   };
 
   // The click follows the smoothed beats (detection jitter removed, drift kept).
@@ -111,5 +111,38 @@ describe('beat smoothing', () => {
     expect(r.min).toBeGreaterThan(94.9);
     expect(r.max).toBeLessThan(99.1);
     expect(r.max - r.min).toBeGreaterThan(3);
+  });
+});
+
+describe('songs with several audio files', () => {
+  it('converts songs saved with a single inline file', () => {
+    const legacy = { id: 'f1', name: 'x.mp3', durationMs: 1000, offsetMs: 250, follow: true, beats: [1, 2] } as never;
+    expect(normalizeTrack(legacy)).toEqual({
+      files: [{ id: 'f1', name: 'x.mp3', label: 'Negativ', durationMs: 1000, volume: 1 }],
+      tempoFile: 'f1',
+      offsetMs: 250,
+      follow: true,
+      beats: [1, 2],
+    });
+    const plain = { id: 'f1', name: 'x.mp3', durationMs: 1000, offsetMs: 250 } as never;
+    const t = songTransport({ ...song, track: plain }, 0, 1);
+    expect(t.song!.track).toEqual({ offsetMs: 250, files: [{ id: 'f1', label: 'Negativ', volume: 1 }] });
+  });
+
+  it('shares every file, with its label and default volume, on one timeline', () => {
+    const track = {
+      files: [
+        { id: 'voc', name: 'vocals.wav', label: 'Voce', durationMs: 1000, volume: 1 },
+        { id: 'orig', name: 'song.mp3', label: 'Original', durationMs: 1000, volume: 0 },
+      ],
+      tempoFile: 'orig',
+      offsetMs: 500,
+    };
+    const t = songTransport({ ...song, track }, 1000, 1);
+    expect(t.song!.track!.files.map((f) => [f.id, f.label, f.volume])).toEqual([
+      ['voc', 'Voce', 1],
+      ['orig', 'Original', 0],
+    ]);
+    expect(trackPositionAt(t.song!, 3000)).toBe(500);
   });
 });

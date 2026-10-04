@@ -7,31 +7,32 @@ export interface AudioTimeMap {
   masterForCtx(ctxS: number): number;
 }
 
-/** Errors above this restart the track at the right spot instead of nudging it. */
+/** Errors above this restart a file at the right spot instead of nudging it. */
 const RESYNC_S = 0.04;
-/** Max playback-rate deviation used to pull the track back in time (0.2%: inaudible). */
+/** Max playback-rate deviation used to pull a file back in time (0.2%: inaudible). */
 const MAX_RATE_DEV = 0.002;
 
-interface Playing {
-  id: string;
+interface Voice {
   src: AudioBufferSourceNode;
   startCtx: number;
-  /** Track position (s) at `lastCtx`, integrated from the playback rate. */
+  /** File position (s) at `lastCtx`, integrated from the playback rate. */
   pos: number;
   lastCtx: number;
   rate: number;
 }
 
 /**
- * Plays the song's backing track locally, locked to the master clock.
- * The track runs on this device's audio clock, which drifts against the
- * master's by tens of ppm (~15 ms over five minutes), so its position is
- * compared with where it should be on every tick and the playback rate is
- * nudged by up to 0.2% to stay within a few ms of the click.
+ * Plays a song's audio files locally, locked to the master clock, each
+ * through its own volume. A file runs on this device's audio clock, which
+ * drifts against the master's by tens of ppm (~15 ms over five minutes), so
+ * on every tick its position is compared with where it should be and the
+ * playback rate is nudged by up to 0.2% to stay within a few ms of the click.
  */
 export class TrackPlayer {
   private buffers = new Map<string, AudioBuffer>();
-  private playing: Playing | null = null;
+  private voices = new Map<string, Voice>();
+  private gains = new Map<string, GainNode>();
+  /** All files together ("Volum negative"). */
   readonly gain: GainNode;
 
   constructor(
@@ -46,54 +47,68 @@ export class TrackPlayer {
     return this.buffers.has(id);
   }
 
-  /** Keeps only the latest track decoded: a decoded song takes tens of MB. */
   add(id: string, buffer: AudioBuffer): void {
-    if (this.buffers.has(id)) return;
-    this.buffers.clear();
     this.buffers.set(id, buffer);
   }
 
-  stop(): void {
-    if (!this.playing) return;
-    try {
-      this.playing.src.stop();
-    } catch {
-      // Not started yet.
+  /** Frees decoded audio of files no longer needed (a decoded song takes tens of MB). */
+  keepOnly(ids: Set<string>): void {
+    for (const id of [...this.buffers.keys()]) {
+      if (ids.has(id)) continue;
+      this.buffers.delete(id);
+      this.stopVoice(id);
     }
-    this.playing.src.disconnect();
-    this.playing = null;
+  }
+
+  setVolume(id: string, v: number): void {
+    this.gainFor(id).gain.setTargetAtTime(v, this.ctx.currentTime, 0.02);
+  }
+
+  stop(): void {
+    for (const id of [...this.voices.keys()]) this.stopVoice(id);
   }
 
   /** Called on every scheduler tick and whenever timing inputs change. */
   update(t: Transport | null): void {
-    const now = this.ctx.currentTime;
     const song = t?.running ? t.song : undefined;
-    const buffer = song?.track ? this.buffers.get(song.track.id) : undefined;
-    const expected = song ? trackPositionAt(song, this.time.masterForCtx(now)) : null;
-    if (!song?.track || !buffer || expected === null || expected / 1000 >= buffer.duration) return this.stop();
-
-    const p = this.playing;
-    if (p && p.id === song.track.id) {
-      if (now < p.startCtx) {
-        const due = trackPositionAt(song, this.time.masterForCtx(p.startCtx))! / 1000;
-        if (Math.abs(due - p.pos) <= 0.005) return;
-        this.stop();
-        return this.start(song.track.id, buffer, t!);
-      }
-      p.pos += (now - Math.max(p.lastCtx, p.startCtx)) * p.rate;
-      p.lastCtx = now;
-      const err = expected / 1000 - p.pos;
-      if (Math.abs(err) <= RESYNC_S) {
-        p.rate = 1 + Math.max(-MAX_RATE_DEV, Math.min(MAX_RATE_DEV, err * 0.5));
-        p.src.playbackRate.setValueAtTime(p.rate, now);
-        return;
-      }
+    const files = song?.track?.files ?? [];
+    for (const id of [...this.voices.keys()]) if (!files.some((f) => f.id === id)) this.stopVoice(id);
+    if (!song?.track) return;
+    for (const f of files) {
+      const buffer = this.buffers.get(f.id);
+      if (buffer) this.updateVoice(f.id, buffer, t!);
+      else this.stopVoice(f.id);
     }
-    this.stop();
-    this.start(song.track.id, buffer, t!);
   }
 
-  private start(id: string, buffer: AudioBuffer, t: Transport): void {
+  private updateVoice(id: string, buffer: AudioBuffer, t: Transport): void {
+    const song = t.song!;
+    const now = this.ctx.currentTime;
+    const expected = trackPositionAt(song, this.time.masterForCtx(now))! / 1000;
+    if (expected >= buffer.duration) return this.stopVoice(id);
+
+    const v = this.voices.get(id);
+    if (v) {
+      if (now < v.startCtx) {
+        // Not started yet: re-time it if latency or the clock changed meanwhile.
+        const due = trackPositionAt(song, this.time.masterForCtx(v.startCtx))! / 1000;
+        if (Math.abs(due - v.pos) <= 0.005) return;
+      } else {
+        v.pos += (now - Math.max(v.lastCtx, v.startCtx)) * v.rate;
+        v.lastCtx = now;
+        const err = expected - v.pos;
+        if (Math.abs(err) <= RESYNC_S) {
+          v.rate = 1 + Math.max(-MAX_RATE_DEV, Math.min(MAX_RATE_DEV, err * 0.5));
+          v.src.playbackRate.setValueAtTime(v.rate, now);
+          return;
+        }
+      }
+    }
+    this.stopVoice(id);
+    this.startVoice(id, buffer, t);
+  }
+
+  private startVoice(id: string, buffer: AudioBuffer, t: Transport): void {
     const song = t.song!;
     const now = this.ctx.currentTime;
     const earliest = this.time.masterForCtx(now + 0.05);
@@ -103,8 +118,30 @@ export class TrackPlayer {
     const when = this.time.ctxForMaster(startMaster);
     const src = this.ctx.createBufferSource();
     src.buffer = buffer;
-    src.connect(this.gain);
+    src.connect(this.gainFor(id));
     src.start(when, Math.max(0, pos));
-    this.playing = { id, src, startCtx: when, pos: Math.max(0, pos), lastCtx: when, rate: 1 };
+    this.voices.set(id, { src, startCtx: when, pos: Math.max(0, pos), lastCtx: when, rate: 1 });
+  }
+
+  private stopVoice(id: string): void {
+    const v = this.voices.get(id);
+    if (!v) return;
+    try {
+      v.src.stop();
+    } catch {
+      // Not started yet.
+    }
+    v.src.disconnect();
+    this.voices.delete(id);
+  }
+
+  private gainFor(id: string): GainNode {
+    let g = this.gains.get(id);
+    if (!g) {
+      g = this.ctx.createGain();
+      g.connect(this.gain);
+      this.gains.set(id, g);
+    }
+    return g;
   }
 }

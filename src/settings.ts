@@ -7,8 +7,10 @@ export interface Settings {
   role: Role | null;
   sound: SoundKind;
   volume: number;
-  /** Backing-track volume. */
+  /** All backing tracks together. */
   trackVolume: number;
+  /** This member's volume per backing-track file id (overrides the song's default). */
+  fileVolumes: Record<string, number>;
   subdivision: Subdivision;
   /** Bluetooth/output latency compensation for this phone + headphones, in ms. */
   latencyMs: number;
@@ -19,7 +21,7 @@ export interface Settings {
 
 const KEY = 'bandmetro.settings.v1';
 
-const DEFAULTS: Settings = { role: null, sound: 'click', volume: 0.8, trackVolume: 0.8, subdivision: 1, latencyMs: 0, masterMode: 'free', lastSongId: null };
+const DEFAULTS: Settings = { role: null, sound: 'click', volume: 0.8, trackVolume: 0.8, fileVolumes: {}, subdivision: 1, latencyMs: 0, masterMode: 'free', lastSongId: null };
 
 export function loadSettings(): Settings {
   try {

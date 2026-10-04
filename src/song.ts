@@ -23,16 +23,33 @@ export interface Marker {
 }
 
 /**
- * Backing track ("negativ") of a song. Only this description is shared via
- * Firebase; the audio itself is kept on the devices and passed phone to phone.
+ * One audio file of a song: a backing track, an extracted vocal, the original
+ * recording used only to follow its tempo... Only this description is shared
+ * via Firebase; the audio itself is kept on the devices and passed phone to phone.
  */
-export interface TrackRef {
+export interface TrackFile {
   /** SHA-256 of the file, so every device knows it has exactly the same audio. */
   id: string;
+  /** File name as picked. */
   name: string;
-  /** Where song bar 1 starts in the file, in ms (may be negative if the file starts late). */
-  offsetMs: number;
+  /** What it is, shown in everyone's mix: "Voce", "Original", "Negativ"... */
+  label: string;
   durationMs: number;
+  /** Starting volume (0–1) for every member; 0 = silent unless someone turns it up. */
+  volume: number;
+}
+
+/**
+ * The audio of a song. All files share one timeline (stems extracted from the
+ * same recording line up sample for sample), so one bar-1 offset and one set
+ * of detected beats apply to all of them.
+ */
+export interface TrackRef {
+  files: TrackFile[];
+  /** File the tempo and bar 1 are detected from (usually the original recording). */
+  tempoFile?: string;
+  /** Where song bar 1 starts in the files, in ms. */
+  offsetMs: number;
   /** Beats found in the file (ms), from the analysis in the editor. */
   beats?: number[];
   /**
@@ -40,6 +57,26 @@ export interface TrackRef {
    * recordings made without a click, whose tempo drifts.
    */
   follow?: boolean;
+}
+
+/** Songs saved before multi-file support had one file described inline on the track. */
+interface LegacyTrack {
+  id?: string;
+  name?: string;
+  durationMs?: number;
+}
+
+/** The track in the current format (also converts songs saved with a single file). */
+export function normalizeTrack(t: (TrackRef & LegacyTrack) | undefined): TrackRef | undefined {
+  if (!t) return undefined;
+  const files: TrackFile[] = t.files?.length
+    ? t.files
+    : t.id
+      ? [{ id: t.id, name: t.name ?? 'negativ', label: 'Negativ', durationMs: t.durationMs ?? 0, volume: 1 }]
+      : [];
+  if (files.length === 0) return undefined;
+  const { id: _i, name: _n, durationMs: _d, ...rest } = t;
+  return { ...rest, files, tempoFile: files.some((f) => f.id === t.tempoFile) ? t.tempoFile : files[0].id };
 }
 
 export interface Song {
@@ -87,6 +124,7 @@ export function normalizeSong(song: Song): Song {
   return {
     ...song,
     markers,
+    track: normalizeTrack(song.track),
     bars: clamp(Math.round(song.bars) || 1, 1, 2000),
     countInBars: clamp(Math.round(song.countInBars) || 0, 0, 8),
   };
@@ -147,7 +185,10 @@ export function songTransport(input: Song, startAt: number, rev: number, fromBar
     firstBar: first.bar,
     firstSongBar: startBar + 1,
     bar1At: shift,
-    track: song.track ? { id: song.track.id, offsetMs: followed?.offsetMs ?? song.track.offsetMs } : undefined,
+    track: song.track && {
+      offsetMs: followed?.offsetMs ?? song.track.offsetMs,
+      files: song.track.files.map((f) => ({ id: f.id, label: f.label, volume: f.volume })),
+    },
     endBar: song.bars,
     bars: song.bars,
     cues,
