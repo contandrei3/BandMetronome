@@ -69,6 +69,15 @@ export class MetronomeEngine {
   private readonly track: TrackPlayer;
 
   constructor() {
+    // iPhone: play like a music app, so the ring/silent switch does not mute the click (iOS 17+).
+    const session = (navigator as { audioSession?: { type: string } }).audioSession;
+    if (session) {
+      try {
+        session.type = 'playback';
+      } catch {
+        // Older Safari: the switch must be on ring.
+      }
+    }
     this.ctx = new AudioContext({ latencyHint: 'interactive' });
     this.out = this.ctx.createGain();
     this.out.connect(this.ctx.destination);
@@ -182,8 +191,13 @@ export class MetronomeEngine {
 
   /** Android suspends audio when the page is hidden; call when it becomes visible again. */
   async resume(): Promise<void> {
-    await this.ctx.resume();
+    await Promise.race([this.ctx.resume(), new Promise((r) => setTimeout(r, 1500))]);
     this.reschedule();
+  }
+
+  /** False while the browser holds the audio (page hidden, phone call, iOS interruption). */
+  get audioRunning(): boolean {
+    return this.ctx.state === 'running';
   }
 
   private reschedule(): void {

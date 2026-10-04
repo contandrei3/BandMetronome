@@ -316,9 +316,17 @@ async function boot(): Promise<MetronomeEngine> {
   e.subdivision = settings.subdivision;
   e.latencyMs = settings.latencyMs;
   keepScreenOn();
+  // Coming back to the page (or after a call on iOS) the audio may stay paused until a tap.
+  const checkAudio = () => show($('audioResume'), !e.audioRunning && document.visibilityState === 'visible');
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') void e.resume();
+    if (document.visibilityState !== 'visible') return;
+    void e.resume().then(() => setTimeout(checkAudio, 300));
   });
+  e.ctx.addEventListener('statechange', () => setTimeout(checkAudio, 300));
+  $('audioResume').onclick = () => {
+    void e.resume().then(checkAudio);
+    keepScreenOn();
+  };
   return e;
 }
 
