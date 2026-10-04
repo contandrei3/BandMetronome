@@ -63,7 +63,54 @@ function withChords(x: Float32Array, beatTimes: number[], firstBar: number): Flo
   return x;
 }
 
+function introSong(seed = 5) {
+  const sr = ANALYSIS_RATE, period = 627.6, n = 60, t0 = 500;
+  const truth = Array.from({ length: n }, (_, i) => t0 + i * period);
+  const x = new Float32Array(Math.round((truth[n - 1] / 1000 + 1) * sr));
+  const r = rng(seed);
+  for (let i = 0; i < x.length; i++) x[i] = 0.01 * r();
+  const pluck = (t: number, f: number, amp: number) => {
+    const s0 = Math.round((t / 1000) * sr);
+    for (let i = 0; i < sr * 0.5 && s0 + i < x.length; i++) x[s0 + i] += amp * Math.exp(-i / (sr * 0.15)) * Math.sin((2 * Math.PI * f * i) / sr);
+  };
+  const hit = (t: number, f: number, amp: number, noise: number, d: number) => {
+    const s0 = Math.round((t / 1000) * sr), dd = (d / 1000) * sr;
+    for (let i = 0; i < dd * 4 && s0 + i < x.length; i++) x[s0 + i] += Math.exp(-i / dd) * (amp * Math.sin((2 * Math.PI * f * i) / sr) + noise * r());
+  };
+  const notes = [330, 392, 494, 440, 392, 330, 294, 262];
+  // Guitar arpeggio on eighths throughout, accents irregular (syncopated), loud in the intro.
+  // Syncopated riff: 3+3+2 sixteenths, accents on the off-grid notes, played loosely (±25 ms).
+  const pattern = [0, 3, 6, 8, 11, 14];
+  for (let bar = 0; bar < n / 4; bar++) {
+    for (let k = 0; k < pattern.length; k++) {
+      const t = t0 + bar * 4 * period + (pattern[k] * period) / 4;
+      pluck(t + 25 * r(), notes[(bar * 6 + k) % 8], 0.3 * (k % 3 === 1 ? 1 : 0.6));
+    }
+  }
+  // Drums from beat 12 on.
+  truth.forEach((t, i) => {
+    if (i < 12) return;
+    hit(t, 55, i % 2 === 0 ? 0.7 : 0.35, 0.1, 70);
+    if (i % 2 === 1) hit(t, 180, 0.2, 0.45, 50);
+  });
+  return { x, truth };
+}
+
 describe('beat analysis', () => {
+  it('keeps a drumless, syncopated intro on the tempo of the band that follows', () => {
+    const { x, truth } = introSong();
+    const res = analyzeBeats(x, 96)!;
+    expect(res.extrapolated).toBeGreaterThanOrEqual(8);
+    const errs = truth.slice(0, 16).map((t) => Math.abs(res.beats.reduce((a, b) => (Math.abs(b - t) < Math.abs(a - t) ? b : a)) - t));
+    expect(Math.max(...errs)).toBeLessThan(12);
+  });
+
+  it('leaves confident sections untouched', () => {
+    const truth = Array.from({ length: 60 }, (_, i) => 400 + i * 600);
+    const res = analyzeBeats(groove(truth, 37), 100)!;
+    expect(res.extrapolated).toBe(0);
+  });
+
   it('finds beat 1 of the bar from chord changes, also after a pickup', () => {
     const truth = Array.from({ length: 70 }, (_, i) => 600 + i * 625);
     for (const firstBar of [0, 1, 2, 3]) {

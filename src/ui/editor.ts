@@ -210,8 +210,12 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
       // Bar 1 on the first detected beat 1 (where chords change / the kick lands).
       const bar1 = draft.track.beats[found.downbeat];
       offsetInput.value = String(bar1 / 1000);
+      const repaired = found.extrapolated
+        ? ` ${found.extrapolated} bătăi fără un ritm clar (ex. intro fără tobe) au primit tempo-ul părții cu tobe de lângă ele.`
+        : '';
       analysisText.textContent =
         describe() +
+        repaired +
         ` Măsura 1 pusă pe primul timp 1 găsit (${(bar1 / 1000).toFixed(2)} s). Ascultă cu click; dacă nu cade pe 1, mută cu „o bătaie”.`;
       draft.track.follow = !isSteady(found.maxDeviationMs);
     } catch (e) {

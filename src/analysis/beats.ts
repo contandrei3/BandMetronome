@@ -21,6 +21,11 @@ export interface BeatAnalysis {
   beats: number[];
   /** Index in `beats` of the first beat that is beat 1 of a bar. */
   downbeat: number;
+  /**
+   * Beats placed by extending the tempo of a nearby confident section, because
+   * the audio there had no clear beat (e.g. a guitar-only intro).
+   */
+  extrapolated: number;
   /** Best constant tempo through all beats (least squares). */
   bpm: number;
   /** Largest distance (ms) of a beat from that constant grid: small = steady tempo. */
@@ -38,10 +43,14 @@ export function analyzeBeats(samples: Float32Array, bpmHint?: number, beatsPerBa
   if (!period) return null;
   const frames = trimSilentEnds(env, trackBeats(env, period));
   if (frames.length < 8) return null;
-  const beats = frames.map((f) => frameToMs(refinePeak(env, f)));
+  const strength = frames.map((f) => peakNear(env, f));
+  const { beats, extrapolated } = repairWeakRegions(
+    frames.map((f) => frameToMs(refinePeak(env, f))),
+    strength,
+  );
   const fit = fitGrid(beats);
   const downbeat = findDownbeat(samples, beats, beatsPerBar);
-  return { beats, downbeat, bpm: 60000 / fit.period, maxDeviationMs: fit.maxDeviation };
+  return { beats, downbeat, extrapolated, bpm: 60000 / fit.period, maxDeviationMs: fit.maxDeviation };
 }
 
 /** Least-squares constant grid through beat times: time = offset + i * period. */
@@ -272,6 +281,86 @@ function trimSilentEnds(env: Float32Array, frames: number[]): number[] {
   while (lo < hi && strength[lo] < 0.25 * median) lo++;
   while (hi > lo && strength[hi - 1] < 0.25 * median) hi--;
   return frames.slice(lo, hi);
+}
+
+function peakNear(env: Float32Array, f: number): number {
+  let m = 0;
+  for (let t = Math.max(0, f - 3); t <= Math.min(env.length - 1, f + 3); t++) m = Math.max(m, env[t]);
+  return m;
+}
+
+/**
+ * Where the beat is not audible (a guitar-only intro, a breakdown) the tracker
+ * latches onto whatever notes are there and wanders. Runs of at least 4 beats
+ * whose attacks are clearly weaker than the song's typical beat are replaced
+ * by the tempo of the confident beats next to them: extended backwards for an
+ * intro, forwards for an outro, interpolated for a gap in the middle.
+ */
+export function repairWeakRegions(beats: number[], strength: number[]): { beats: number[]; extrapolated: number } {
+  const n = beats.length;
+  if (n < 16) return { beats, extrapolated: 0 };
+  // Typical strength of a clear beat, and a per-beat strength smoothed over about a bar.
+  const typical = [...strength].sort((a, b) => a - b)[Math.floor(n * 0.75)];
+  const local = strength.map((_, i) => {
+    const w = strength.slice(Math.max(0, i - 2), i + 3).sort((a, b) => a - b);
+    return w[w.length >> 1];
+  });
+  const weak = local.map((v) => v < 0.4 * typical);
+  const out = [...beats];
+  let extrapolated = 0;
+  for (let i = 0; i < n; ) {
+    if (!weak[i]) {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j + 1 < n && weak[j + 1]) j++;
+    const len = j - i + 1;
+    if (len >= 4) {
+      const before = range(Math.max(0, i - 16), i).filter((k) => !weak[k]);
+      const after = range(j + 1, Math.min(n, j + 17)).filter((k) => !weak[k]);
+      if (after.length >= 8 && before.length < 8) {
+        // Intro: extend the tempo of what follows backwards.
+        const f = lineFit(after, out);
+        for (let k = i; k <= j; k++) out[k] = f.c + f.k * k;
+        extrapolated += len;
+      } else if (before.length >= 8 && after.length < 8) {
+        // Outro: extend forwards.
+        const f = lineFit(before, out);
+        for (let k = i; k <= j; k++) out[k] = f.c + f.k * k;
+        extrapolated += len;
+      } else if (before.length >= 8 && after.length >= 8) {
+        // Gap: blend the tempo on both sides.
+        const a = lineFit(before, out);
+        const b = lineFit(after, out);
+        for (let k = i; k <= j; k++) {
+          const w = (k - i + 1) / (len + 1);
+          out[k] = (1 - w) * (a.c + a.k * k) + w * (b.c + b.k * k);
+        }
+        extrapolated += len;
+      }
+    }
+    i = j + 1;
+  }
+  return { beats: out, extrapolated };
+}
+
+function range(a: number, b: number): number[] {
+  return Array.from({ length: Math.max(0, b - a) }, (_, i) => a + i);
+}
+
+function lineFit(idx: number[], ys: number[]): { k: number; c: number } {
+  const n = idx.length;
+  const mx = idx.reduce((s, x) => s + x, 0) / n;
+  const my = idx.reduce((s, x) => s + ys[x], 0) / n;
+  let sxx = 0;
+  let sxy = 0;
+  for (const x of idx) {
+    sxx += (x - mx) ** 2;
+    sxy += (x - mx) * (ys[x] - my);
+  }
+  const k = sxy / sxx;
+  return { k, c: my - k * mx };
 }
 
 /** Sub-frame position of the onset peak near a tracked beat. */
