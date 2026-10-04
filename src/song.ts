@@ -1,3 +1,4 @@
+import { smoothBeats } from './analysis/beats';
 import { cueIsFor, type Role } from './roles';
 import { beatOffset, splitSegment, type Cue, type Segment, type SongInfo, type Transport } from './timeline';
 
@@ -244,7 +245,7 @@ function markerSegments(song: Song): Segment[] {
  * markers. Past the last detected beat the last bar's tempo continues.
  */
 function beatMapSegments(song: Song): { segs: Segment[]; offsetMs: number } {
-  const beats = song.track!.beats!;
+  const beats = smoothBeats(song.track!.beats!);
   let b0 = 0;
   for (let i = 1; i < beats.length; i++) {
     if (Math.abs(beats[i] - song.track!.offsetMs) < Math.abs(beats[b0] - song.track!.offsetMs)) b0 = i;

@@ -3,6 +3,7 @@ import { rebaseTransport } from '../src/masterState';
 import { songTransport, type Song } from '../src/song';
 import { trackPositionAt, trackStartAt } from '../src/tracks';
 import { tickAt } from '../src/timeline';
+import { smoothBeats, tempoRange } from '../src/analysis/beats';
 
 const song: Song = {
   id: 's',
@@ -55,36 +56,60 @@ describe('following the backing track tempo', () => {
     track: { id: 'abc', name: 'a.mp3', offsetMs: 3000, durationMs: 60000, beats, follow: true },
   };
 
+  // The click follows the smoothed beats (detection jitter removed, drift kept).
+  const smooth = smoothBeats(beats);
+
   it('puts every click on a detected beat, bar 1 on the beat nearest the offset', () => {
     const t = songTransport(followSong, 0, 1);
-    // Offset 3000 snaps to beat 4 (3040 ms in the file).
-    expect(t.song!.track!.offsetMs).toBe(beats[4]);
+    // Offset 3000 snaps to beat 4 (≈3040 ms in the file).
+    expect(t.song!.track!.offsetMs).toBe(smooth[4]);
     // Downbeats land exactly on the recording's beats.
     for (const k of [0, 4, 12, 20, 28]) {
-      expect(trackPositionAt(t.song!, tickAt(t, 1, k).time)).toBeCloseTo(beats[4 + k], 6);
+      expect(trackPositionAt(t.song!, tickAt(t, 1, k).time)).toBeCloseTo(smooth[4 + k], 6);
     }
     // Inside a bar the tempo is that bar's average: within a few ms even for this
     // exaggerated acceleration (real recordings drift far less within one bar).
     for (const k of [1, 7, 13, 31]) {
-      expect(Math.abs(trackPositionAt(t.song!, tickAt(t, 1, k).time)! - beats[4 + k])).toBeLessThan(5);
+      expect(Math.abs(trackPositionAt(t.song!, tickAt(t, 1, k).time)! - beats[4 + k])).toBeLessThan(12);
     }
   });
 
   it('reports the bar tempo from the recording', () => {
     const t = songTransport(followSong, 0, 1);
     const bar2 = t.segments.find((s) => s.bar === 1)!;
-    expect(bar2.bpm).toBeCloseTo(60000 / ((beats[12] - beats[8]) / 4), 6);
+    expect(bar2.bpm).toBeCloseTo(60000 / ((smooth[12] - smooth[8]) / 4), 6);
   });
 
   it('can start from a later bar', () => {
     const t = songTransport(followSong, 0, 1, 3);
     const first = tickAt(t, 1, 8); // bar 3, beat 1
-    expect(trackPositionAt(t.song!, first.time)).toBeCloseTo(beats[12], 6);
+    expect(trackPositionAt(t.song!, first.time)).toBeCloseTo(smooth[12], 6);
   });
 
   it('keeps using the BPM markers when following is off', () => {
     const t = songTransport({ ...followSong, track: { ...followSong.track!, follow: false } }, 0, 1);
     expect(t.segments.at(-1)!.bpm).toBe(96);
     expect(t.song!.track!.offsetMs).toBe(3000);
+  });
+});
+
+describe('beat smoothing', () => {
+  it('ignores a single misdetected beat', () => {
+    const beats = Array.from({ length: 40 }, (_, i) => 500 + i * 620);
+    beats[20] += 45; // one beat detected 45 ms late
+    const s = smoothBeats(beats);
+    expect(Math.abs(s[20] - (500 + 20 * 620))).toBeLessThan(2);
+    expect(Math.abs(s[19] - (500 + 19 * 620))).toBeLessThan(2);
+  });
+
+  it('keeps a real tempo drift (95 -> 99 BPM)', () => {
+    const beats = [0];
+    for (let i = 1; i < 200; i++) beats.push(beats[i - 1] + 60000 / (95 + (4 * i) / 200));
+    const s = smoothBeats(beats);
+    expect(Math.max(...s.map((v, i) => Math.abs(v - beats[i])))).toBeLessThan(1);
+    const r = tempoRange(beats);
+    expect(r.min).toBeGreaterThan(94.9);
+    expect(r.max).toBeLessThan(99.1);
+    expect(r.max - r.min).toBeGreaterThan(3);
   });
 });

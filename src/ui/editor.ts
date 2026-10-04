@@ -1,5 +1,5 @@
 import { ROLES, type Role } from '../roles';
-import { analyzeBeats, decodeForAnalysis, fitGrid, type BeatAnalysis } from '../analysis/beats';
+import { analyzeBeats, decodeForAnalysis, fitGrid, tempoRange, type BeatAnalysis } from '../analysis/beats';
 import { MetronomeEngine } from '../audio/engine';
 import { newSong, normalizeSong, songPosition, songTransport, type Marker, type Song } from '../song';
 import { beatAt } from '../timeline';
@@ -95,19 +95,18 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
     show($('edTrackTools'), !!draft.track);
     follow.disabled = !draft.track?.beats?.length;
     follow.checked = !!draft.track?.follow && !follow.disabled;
-    applyBpm.classList.toggle('hidden', !found);
+    // A fixed BPM is only offered when it can actually hold for the whole song.
+    applyBpm.classList.toggle('hidden', !found || !isSteady(found.maxDeviationMs));
   };
   const describe = () => {
     const beats = draft.track?.beats;
     if (!beats?.length) return '';
     const a = found ?? { bpm: 60000 / fitGrid(beats).period, maxDeviationMs: fitGrid(beats).maxDeviation };
-    const steady = a.maxDeviationMs < 25;
-    return (
-      `Tempo găsit: ${a.bpm.toFixed(2)} BPM · ${beats.length} bătăi. ` +
-      (steady
-        ? `Tempo constant (abatere max ${Math.round(a.maxDeviationMs)} ms): folosește BPM-ul găsit.`
-        : `Tempo-ul variază (până la ${Math.round(a.maxDeviationMs)} ms față de un BPM fix): bifează „urmărește tempo-ul negativului”.`)
-    );
+    const r = tempoRange(beats);
+    return isSteady(a.maxDeviationMs)
+      ? `Tempo constant: ${a.bpm.toFixed(2)} BPM (${beats.length} bătăi). Apasă „Folosește BPM-ul găsit”.`
+      : `Tempo-ul variază între ${r.min.toFixed(1)} și ${r.max.toFixed(1)} BPM (înregistrare fără click), deci un BPM fix ` +
+          `s-ar decala după câteva măsuri. Lasă bifat „Click-ul urmărește tempo-ul negativului”.`;
   };
   analysisText.textContent = describe();
   paint();
@@ -156,7 +155,7 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
       analysisText.textContent =
         describe() +
         ` Măsura 1 pusă pe primul timp 1 găsit (${(bar1 / 1000).toFixed(2)} s). Ascultă cu click; dacă nu cade pe 1, mută cu „o bătaie”.`;
-      if (found.maxDeviationMs >= 25) draft.track.follow = true;
+      draft.track.follow = !isSteady(found.maxDeviationMs);
     } catch (e) {
       analysisText.textContent = `Nu a mers: ${(e as Error).message}. Poți seta BPM-ul și măsura 1 manual.`;
     }
@@ -189,8 +188,8 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
       const cur = Number(offsetInput.value) * 1000;
       const step = b.dataset.nudge!;
       let next: number;
-      if (step === 'beat' || step === '-beat') {
-        const dir = step === 'beat' ? 1 : -1;
+      if (step === 'beat' || step === '-beat' || step === 'bar' || step === '-bar') {
+        const dir = (step.startsWith('-') ? -1 : 1) * (step.endsWith('bar') ? (readDraft().markers[0]?.beatsPerBar ?? 4) : 1);
         const beats = draft.track.beats;
         if (draft.track.follow && beats?.length) {
           const i = beats.indexOf(nearest(beats, cur));
@@ -261,6 +260,11 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
 
   previewBtn.onclick = () => (preview ? stopPreview() : startPreview(Number($<HTMLInputElement>('edPreviewBar').value) || 1));
   return { stopPreview };
+}
+
+/** Under this, one BPM keeps every beat within ~25 ms of the recording for the whole song. */
+function isSteady(maxDeviationMs: number): boolean {
+  return maxDeviationMs < 25;
 }
 
 function nearest(xs: number[], x: number): number {

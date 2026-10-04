@@ -276,12 +276,15 @@
             </label>
             <div>
               <div class="mb-1 text-xs text-neutral-500">Mută măsura 1 față de negativ:</div>
-              <div class="grid grid-cols-4 gap-2">
+              <div class="grid grid-cols-3 gap-2 sm:grid-cols-6">
+                <button data-nudge="-bar" class="rounded-lg bg-neutral-900 py-2 text-sm font-bold">◀ o măsură</button>
                 <button data-nudge="-beat" class="rounded-lg bg-neutral-900 py-2 text-sm font-bold">◀ o bătaie</button>
                 <button data-nudge="-10" class="rounded-lg bg-neutral-900 py-2 text-sm font-bold">−10 ms</button>
                 <button data-nudge="10" class="rounded-lg bg-neutral-900 py-2 text-sm font-bold">+10 ms</button>
                 <button data-nudge="beat" class="rounded-lg bg-neutral-900 py-2 text-sm font-bold">o bătaie ▶</button>
+                <button data-nudge="bar" class="rounded-lg bg-neutral-900 py-2 text-sm font-bold">o măsură ▶</button>
               </div>
+              <p class="mt-1 text-xs text-neutral-500">Tot ce e în fișier înainte de măsura 1 se aude în timpul count-in-ului. Dacă auzi muzică acolo, măsura 1 e mai târziu: mută cu ▶.</p>
             </div>
             <div class="flex items-center gap-2">
               <button id="edPreview" class="flex-1 rounded-xl bg-green-700 px-3 py-3 font-bold">▶ Ascultă cu click</button>

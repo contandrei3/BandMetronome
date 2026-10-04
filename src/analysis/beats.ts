@@ -63,6 +63,52 @@ export function fitGrid(beats: number[]): { period: number; offset: number; maxD
   return { period, offset, maxDeviation };
 }
 
+/**
+ * Beat times with detection jitter removed but tempo drift kept: each beat is
+ * placed on a straight line fitted to its neighbours (about one bar on each
+ * side), ignoring neighbours that are clearly off. A single misplaced beat
+ * then no longer drags the click, while a band speeding up is still followed.
+ */
+export function smoothBeats(beats: number[], half = 4): number[] {
+  return beats.map((_, i) => {
+    let xs: number[] = [];
+    for (let j = Math.max(0, i - half); j <= Math.min(beats.length - 1, i + half); j++) xs.push(j);
+    let line = { k: 0, c: beats[i] };
+    for (let pass = 0; pass < 2; pass++) {
+      const n = xs.length;
+      if (n < 2) break;
+      const mx = xs.reduce((a, x) => a + x, 0) / n;
+      const my = xs.reduce((a, x) => a + beats[x], 0) / n;
+      let sxx = 0;
+      let sxy = 0;
+      for (const x of xs) {
+        sxx += (x - mx) ** 2;
+        sxy += (x - mx) * (beats[x] - my);
+      }
+      const k = sxy / sxx;
+      line = { k, c: my - k * mx };
+      const res = xs.map((x) => Math.abs(beats[x] - (line.c + line.k * x)));
+      const mad = [...res].sort((a, b) => a - b)[res.length >> 1] || 1;
+      const kept = xs.filter((_, q) => res[q] <= 3 * mad);
+      if (kept.length < 4 || kept.length === xs.length) break;
+      xs = kept;
+    }
+    return line.c + line.k * i;
+  });
+}
+
+/** Slowest and fastest tempo over stretches of `span` beats (the "95–99 BPM" shown to the user). */
+export function tempoRange(beats: number[], span = 16): { min: number; max: number } {
+  let min = Infinity;
+  let max = -Infinity;
+  for (let i = 0; i + span < beats.length; i += Math.max(1, span >> 1)) {
+    const bpm = (60000 * span) / (beats[i + span] - beats[i]);
+    min = Math.min(min, bpm);
+    max = Math.max(max, bpm);
+  }
+  return { min, max };
+}
+
 // ---------- 1. Onset strength ----------
 
 /**
