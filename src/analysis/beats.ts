@@ -534,3 +534,43 @@ export function bar1FromTaps(
   const on = taps.filter((t, i) => Math.abs(t - taps[0] - k[i] * period) < period / 8).length;
   return { offsetMs: res[res.length >> 1], agreement: on / taps.length, barMs: period };
 }
+
+/**
+ * Replaces the beats of a freely played intro by the user's taps on every
+ * beat (file times, ms). The user goes on tapping about two bars into the
+ * drums: those last taps are matched to the detected beats, which measures
+ * the user's own tap delay (removed from all taps) and tells where to join.
+ * Missed taps are filled in, double taps dropped, and the tapped beats
+ * lightly smoothed (taps jitter by ±20 ms).
+ */
+export function spliceTappedIntro(detected: number[], taps: number[], overlap = 6): { beats: number[]; biasMs: number; joinAt: number } | null {
+  if (taps.length < overlap + 2 || detected.length === 0) return null;
+  const gaps = taps.slice(1).map((t, i) => t - taps[i]);
+  const period = [...gaps].sort((a, b) => a - b)[gaps.length >> 1];
+  // A stray tap before the music really starts (gap far from a beat): skip it.
+  let first = 0;
+  while (first < taps.length - 2 && Math.abs(taps[first + 1] - taps[first] - period) > period * 0.3) first++;
+  const clean = [taps[first]];
+  for (const t of taps.slice(first + 1)) {
+    const last = clean[clean.length - 1];
+    if (t - last < period * 0.5) continue;
+    const n = Math.round((t - last) / period);
+    for (let k = 1; k < n; k++) clean.push(last + ((t - last) * k) / n);
+    clean.push(t);
+  }
+  const nearest = (t: number) => {
+    let best = 0;
+    for (let i = 1; i < detected.length; i++) if (Math.abs(detected[i] - t) < Math.abs(detected[best] - t)) best = i;
+    return best;
+  };
+  // The last taps lie on the drums: their offset from the detected beats is the tap delay.
+  const tail = clean.slice(-overlap);
+  const diffs = tail.map((t) => t - detected[nearest(t)]).sort((a, b) => a - b);
+  const consistent = diffs[diffs.length - 1] - diffs[0] < Math.min(80, period / 3);
+  const biasMs = consistent ? diffs[diffs.length >> 1] : 0;
+  const join = clean.length - overlap;
+  const joinBeat = nearest(clean[join] - biasMs);
+  const tapped = smoothBeats(clean.map((t) => t - biasMs), 2).slice(0, join);
+  const intro = tapped.filter((t) => t < detected[joinBeat] - period / 2);
+  return { beats: [...intro, ...detected.slice(joinBeat)], biasMs, joinAt: intro.length };
+}

@@ -1,5 +1,5 @@
 import { ROLES, type Role } from '../roles';
-import { analyzeBeats, bar1FromTaps, decodeForAnalysis, fitGrid, tempoRange, type BeatAnalysis } from '../analysis/beats';
+import { analyzeBeats, bar1FromTaps, decodeForAnalysis, spliceTappedIntro, fitGrid, tempoRange, type BeatAnalysis } from '../analysis/beats';
 import { loadSettings } from '../settings';
 import { MetronomeEngine } from '../audio/engine';
 import {
@@ -414,13 +414,19 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
   previewBtn.onclick = () => (preview ? stopPreview() : startPreview(Number($<HTMLInputElement>('edPreviewBar').value) || 1));
 
   // ---- Bar 1 by ear: tap on every "1" while the file plays from its start ----
-  let tapping: { engine: MetronomeEngine; bar1At: number; taps: number[]; key: (e: KeyboardEvent) => void } | null = null;
+  /** 'one': tap the "1"s to place bar 1. 'every': tap every beat of a freely played intro. */
+  type TapMode = 'one' | 'every';
+  let tapping: { engine: MetronomeEngine; bar1At: number; taps: number[]; key: (e: KeyboardEvent) => void; mode: TapMode } | null = null;
   const tapBox = $('edTapBox');
   const tapResult = $('edTapResult');
   const tapCount = $('edTapCount');
 
-  async function startTapping() {
+  async function startTapping(mode: TapMode) {
     if (!draft.track || tapping) return;
+    if (mode === 'every' && !draft.track.beats?.length) {
+      tapResult.textContent = 'Apasă întâi „Detectează tempo-ul”: după intro, click-ul urmează tempo-ul detectat.';
+      return;
+    }
     if (!canPreview()) {
       tapResult.textContent = 'Oprește întâi metronomul din sesiune.';
       return;
@@ -429,23 +435,24 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
     const engine = new MetronomeEngine();
     await engine.start();
     engine.latencyMs = 0;
-    engine.volume = 0; // only the music: a wrong click would mislead the ear
-    // The file from 0 s, whatever bar 1 is set to now.
+    // A count-in up to the current bar 1, then only the music: a wrong click would mislead the ear.
     const song = readDraft();
-    song.countInBars = 0;
-    song.track = { ...song.track!, offsetMs: 0, follow: false };
+    song.countInBars = Math.max(1, song.countInBars);
     const t = songTransport(song, performance.now() + 600, 1, 1);
     engine.setTransport(t);
+    engine.muteClickFrom(t.song!.bar1At);
     const key = (e: KeyboardEvent) => {
       if (e.code !== 'Space' || e.repeat) return;
       e.preventDefault();
       tap();
     };
-    tapping = { engine, bar1At: t.song!.bar1At, taps: [], key };
+    tapping = { engine, bar1At: t.song!.bar1At - (t.song!.track?.offsetMs ?? 0), taps: [], key, mode };
+    $('edTap').textContent = mode === 'one' ? '1' : 'TIMP';
     document.addEventListener('keydown', key);
     show(tapBox, true);
     tapBox.classList.add('flex');
     $('edTapStart').classList.add('hidden');
+    $('edTapEvery').classList.add('hidden');
     tapResult.textContent = '';
     tapCount.textContent = 'Se încarcă negativul…';
     for (const f of draft.track.files) {
@@ -453,7 +460,11 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
       const data = f.volume > 0 ? await getTrack(f.id) : undefined;
       if (data && tapping?.engine === engine) await engine.addTrack(f.id, data);
     }
-    if (tapping?.engine === engine) tapCount.textContent = 'Ascultă și apasă pe fiecare „1”';
+    if (tapping?.engine === engine)
+      tapCount.textContent =
+        mode === 'one'
+          ? 'După count-in, apasă pe fiecare „1”'
+          : 'După count-in, apasă pe fiecare timp, până la 2 măsuri după ce intră tobele';
   }
 
   function tap() {
@@ -462,7 +473,7 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
     const at = performance.now() - loadSettings().latencyMs - tapping.bar1At;
     if (at < 0) return;
     tapping.taps.push(at);
-    tapCount.textContent = `${tapping.taps.length} × „1” · ${(at / 1000).toFixed(2)} s`;
+    tapCount.textContent = `${tapping.taps.length} × ${tapping.mode === 'one' ? '„1”' : 'timp'} · ${(at / 1000).toFixed(2)} s`;
     const btn = $('edTap');
     btn.style.transform = 'scale(0.97)';
     setTimeout(() => (btn.style.transform = ''), 80);
@@ -470,14 +481,16 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
 
   async function stopTapping(apply: boolean) {
     if (!tapping) return;
-    const { engine, taps, key } = tapping;
+    const { engine, taps, key, mode } = tapping;
     tapping = null;
     document.removeEventListener('keydown', key);
     show(tapBox, false);
     tapBox.classList.remove('flex');
     $('edTapStart').classList.remove('hidden');
+    $('edTapEvery').classList.remove('hidden');
     await engine.dispose();
     if (!apply || !draft.track) return;
+    if (mode === 'every') return applyTappedIntro(taps);
     if (taps.length < 3) {
       tapResult.textContent = 'Prea puține apăsări: bate pe „1” cel puțin 3–4 măsuri.';
       return;
@@ -522,7 +535,33 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
     void startPreview(1);
   }
 
-  $('edTapStart').onclick = () => void startTapping();
+  /** The intro is played freely: the click follows the taps there, then the detected beats. */
+  function applyTappedIntro(taps: number[]) {
+    const r = draft.track?.beats && spliceTappedIntro(draft.track.beats, taps);
+    if (!draft.track || !r) {
+      tapResult.textContent = 'Prea puține apăsări: bate fiecare timp din intro, de la început până după ce intră tobele.';
+      return;
+    }
+    draft.track.beats = r.beats.map((b) => Math.round(b * 10) / 10);
+    draft.track.follow = true;
+    // The tapped intro is followed as is (no tempo extended over it).
+    draft.track.steadyFromBar = 1;
+    $<HTMLInputElement>('edSteadyBar').value = '1';
+    offsetInput.value = String(Math.round(r.beats[0]) / 1000);
+    const drums = r.joinAt < r.beats.length ? ` De la ${(r.beats[r.joinAt] / 1000).toFixed(1)} s click-ul urmează tempo-ul detectat (tobele).` : '';
+    tapResult.textContent =
+      `Intro bătut: ${r.joinAt} timpi, măsura 1 pe primul (${(r.beats[0] / 1000).toFixed(2)} s).` +
+      (r.biasMs ? ` Întârzierea apăsărilor tale (~${Math.round(r.biasMs)} ms) a fost scoasă.` : '') +
+      drums +
+      ' Ascultă; dacă intro-ul încă nu e bine, bate-l din nou (după „Detectează tempo-ul”).';
+    paint();
+    updateLength();
+    fitLength();
+    void startPreview(1);
+  }
+
+  $('edTapStart').onclick = () => void startTapping('one');
+  $('edTapEvery').onclick = () => void startTapping('every');
   $('edTap').onpointerdown = (e) => {
     e.preventDefault();
     tap();

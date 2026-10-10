@@ -318,8 +318,12 @@
             </label>
             <div class="flex flex-col gap-2 rounded-xl bg-neutral-900/60 p-3 ring-1 ring-amber-500/30">
               <div class="font-bold text-amber-400">Găsește măsura 1 după ureche</div>
-              <p class="text-xs leading-relaxed text-neutral-400">Pornește negativul de la început, fără click. Apasă butonul mare (sau Space) pe fiecare „1”, de la prima măsură a piesei, timp de 4–8 măsuri, apoi „Gata”. Nu trebuie să fii exact: aplicația alege bătaia cea mai apropiată.</p>
-              <button id="edTapStart" class="rounded-xl bg-amber-500 px-3 py-3 font-bold text-black">🥁 Bat pe „1”</button>
+              <p class="text-xs leading-relaxed text-neutral-400">Pornește negativul cu un count-in (click doar până la primul „1”), apoi fără click. Apasă butonul mare (sau Space) pe fiecare „1”, de la prima măsură a piesei, timp de 4–8 măsuri, apoi „Gata”. Nu trebuie să fii exact: aplicația alege bătaia cea mai apropiată.</p>
+              <div class="grid gap-2 sm:grid-cols-2">
+                <button id="edTapStart" class="rounded-xl bg-amber-500 px-3 py-3 font-bold text-black">🥁 Bat pe „1”</button>
+                <button id="edTapEvery" class="rounded-xl bg-neutral-800 px-3 py-3 font-bold ring-1 ring-amber-500/50">🎸 Bat fiecare timp (intro liber)</button>
+              </div>
+              <p class="text-xs leading-relaxed text-neutral-500">Intro cântat liber, fără tobe (ex. Californication)? Apasă întâi „Detectează tempo-ul”, apoi „Bat fiecare timp”: bate fiecare timp din intro, de la primul „1”, și mai continuă 2 măsuri după ce intră tobele. Click-ul te va urma exact pe intro, apoi trece pe tobe.</p>
               <div id="edTapBox" class="hidden flex-col gap-2">
                 <button id="edTap" class="h-32 select-none rounded-2xl bg-amber-500 text-4xl font-black text-black active:bg-amber-300">1</button>
                 <div class="flex items-center gap-2">

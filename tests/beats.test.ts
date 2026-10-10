@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeBeats, ANALYSIS_RATE, bar1FromTaps, fitGrid } from '../src/analysis/beats';
+import { analyzeBeats, ANALYSIS_RATE, bar1FromTaps, fitGrid, spliceTappedIntro } from '../src/analysis/beats';
 
 /** Deterministic pseudo-random numbers. */
 function rng(seed: number) {
@@ -172,5 +172,31 @@ describe('bar1FromTaps', () => {
     expect(r.offsetMs).toBeGreaterThan(1495);
     expect(r.offsetMs).toBeLessThan(1515);
     expect(r.barMs).toBeCloseTo(2000, -1);
+  });
+});
+
+describe('spliceTappedIntro', () => {
+  // Free intro: tempo drifting 90 -> 98 BPM over 16 beats; drums from 10 s, steady 96 BPM.
+  const intro: number[] = [500];
+  for (let k = 1; k < 16; k++) intro.push(intro[k - 1] + 60000 / (90 + k / 2));
+  const drums = Array.from({ length: 60 }, (_, k) => intro[15] + 625 * (k + 1));
+  const wobble = [0, 90, -110, 70, -60, 120, -100, 40, 80, -90, 60, -120, 100, -50, 30, -70];
+  const detected = [...intro.map((t, k) => t + wobble[k]), ...drums];
+
+  it('uses the taps for the intro and the detection from the drums on', () => {
+    // Taps 35 ms late with jitter, one missed, going on 2 bars into the drums.
+    const truth = [...intro, ...drums.slice(0, 8)];
+    const taps = truth.map((t, k) => t + 35 + (k % 3 === 0 ? 15 : k % 3 === 1 ? -12 : 0)).filter((_, k) => k !== 7);
+    const r = spliceTappedIntro(detected, taps)!;
+    expect(r.biasMs).toBeGreaterThan(25);
+    expect(r.biasMs).toBeLessThan(45);
+    expect(r.beats.length).toBe(intro.length + drums.length);
+    const err = intro.map((t, k) => Math.abs(r.beats[k] - t));
+    // A single tap is ±15 ms off; smoothing over neighbours removes most of it.
+    expect(Math.max(...err)).toBeLessThanOrEqual(16);
+    expect(err.reduce((a, v) => a + v, 0) / err.length).toBeLessThan(9);
+    // The calibration taps on the drums: tapped for the first ones, then the detection.
+    expect(Math.abs(r.beats[16] - drums[0])).toBeLessThan(16);
+    expect(r.beats.slice(18)).toEqual(drums.slice(2));
   });
 });

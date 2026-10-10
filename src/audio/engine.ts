@@ -174,6 +174,15 @@ export class MetronomeEngine {
     this.reschedule();
   }
 
+  /** Silences the click from `masterMs` on (backing tracks keep playing). */
+  muteClickFrom(masterMs: number): void {
+    const now = this.ctx.currentTime;
+    const when = this.clock.perfToCtx(this.timeSource.masterToLocal(masterMs) - this._latencyMs);
+    this.out.gain.cancelScheduledValues(now);
+    this.out.gain.setValueAtTime(this.out.gain.value, now);
+    this.out.gain.setValueAtTime(0, Math.max(now, when - 0.05));
+  }
+
   /** The master clock estimate jumped: re-place what is already queued. */
   clockChanged(): void {
     this.reschedule();
