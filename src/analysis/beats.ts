@@ -73,37 +73,66 @@ export function fitGrid(beats: number[]): { period: number; offset: number; maxD
 }
 
 /**
- * Beat times with detection jitter removed but tempo drift kept: each beat is
- * placed on a straight line fitted to its neighbours (about one bar on each
- * side), ignoring neighbours that are clearly off. A single misplaced beat
- * then no longer drags the click, while a band speeding up is still followed.
+ * Beat times with detection jitter removed but tempo drift kept (LOESS):
+ * each beat is placed on a gentle curve (a parabola) fitted to its
+ * neighbours, about three bars on each side, nearer ones counting more.
+ * Beats clearly off that curve are then given less weight and the fit is
+ * repeated. Detection jitter (±20 ms beat to beat on a guitar groove) no
+ * longer makes the click wobble, while a band speeding up or slowing down
+ * is still followed.
  */
-export function smoothBeats(beats: number[], half = 4): number[] {
-  return beats.map((_, i) => {
-    let xs: number[] = [];
-    for (let j = Math.max(0, i - half); j <= Math.min(beats.length - 1, i + half); j++) xs.push(j);
-    let line = { k: 0, c: beats[i] };
-    for (let pass = 0; pass < 2; pass++) {
-      const n = xs.length;
-      if (n < 2) break;
-      const mx = xs.reduce((a, x) => a + x, 0) / n;
-      const my = xs.reduce((a, x) => a + beats[x], 0) / n;
-      let sxx = 0;
-      let sxy = 0;
-      for (const x of xs) {
-        sxx += (x - mx) ** 2;
-        sxy += (x - mx) * (beats[x] - my);
+export function smoothBeats(beats: number[], half = 12): number[] {
+  const n = beats.length;
+  if (n < 5) return [...beats];
+  let robust = new Array<number>(n).fill(1);
+  let out = [...beats];
+  for (let pass = 0; pass < 3; pass++) {
+    out = beats.map((_, i) => {
+      const xs: number[] = [];
+      const ys: number[] = [];
+      const ws: number[] = [];
+      for (let j = Math.max(0, i - half); j <= Math.min(n - 1, i + half); j++) {
+        const u = Math.abs(j - i) / (half + 1);
+        const w = (1 - u ** 3) ** 3 * robust[j];
+        if (w <= 0) continue;
+        xs.push(j - i);
+        ys.push(beats[j]);
+        ws.push(w);
       }
-      const k = sxy / sxx;
-      line = { k, c: my - k * mx };
-      const res = xs.map((x) => Math.abs(beats[x] - (line.c + line.k * x)));
-      const mad = [...res].sort((a, b) => a - b)[res.length >> 1] || 1;
-      const kept = xs.filter((_, q) => res[q] <= 3 * mad);
-      if (kept.length < 4 || kept.length === xs.length) break;
-      xs = kept;
+      return xs.length >= 5 ? (fitParabola(xs, ys, ws)?.(0) ?? beats[i]) : beats[i];
+    });
+    const res = beats.map((v, i) => Math.abs(v - out[i]));
+    const s = Math.max([...res].sort((p, q) => p - q)[n >> 1], 1);
+    robust = res.map((e) => (e < 6 * s ? (1 - (e / (6 * s)) ** 2) ** 2 : 0));
+  }
+  return out;
+}
+
+/** Weighted least squares y = a + b·x + c·x² (x small integers around 0). */
+function fitParabola(xs: number[], ys: number[], ws: number[]): ((x: number) => number) | null {
+  const s = [0, 0, 0, 0, 0];
+  const t = [0, 0, 0];
+  xs.forEach((x, k) => {
+    let p = ws[k];
+    for (let e = 0; e < 5; e++) {
+      s[e] += p;
+      if (e < 3) t[e] += p * ys[k];
+      p *= x;
     }
-    return line.c + line.k * i;
   });
+  // Solve the 3x3 normal equations by Cramer's rule.
+  const m = [
+    [s[0], s[1], s[2]],
+    [s[1], s[2], s[3]],
+    [s[2], s[3], s[4]],
+  ];
+  const det = (q: number[][]) =>
+    q[0][0] * (q[1][1] * q[2][2] - q[1][2] * q[2][1]) - q[0][1] * (q[1][0] * q[2][2] - q[1][2] * q[2][0]) + q[0][2] * (q[1][0] * q[2][1] - q[1][1] * q[2][0]);
+  const d = det(m);
+  if (!(Math.abs(d) > 1e-9)) return null;
+  const col = (c: number) => det(m.map((row, r) => row.map((v, k) => (k === c ? t[r] : v))));
+  const [a, b, c] = [col(0) / d, col(1) / d, col(2) / d];
+  return (x) => a + b * x + c * x * x;
 }
 
 /** Slowest and fastest tempo over stretches of `span` beats (the "95–99 BPM" shown to the user). */
@@ -463,4 +492,45 @@ export async function decodeForAnalysis(data: ArrayBuffer): Promise<Float32Array
     for (let i = 0; i < d.length; i++) out[i] += d[i] / buf.numberOfChannels;
   }
   return out;
+}
+
+/**
+ * Finds bar 1 from the user tapping along on every "1" (file times, ms).
+ * With detected beats, each tap votes for which beat of the bar is the "1";
+ * bar 1 is that beat nearest the first tap, so tap timing only has to be
+ * within half a beat. Without beats, the taps themselves give a grid.
+ */
+export function bar1FromTaps(
+  taps: number[],
+  beatsPerBar: number,
+  beats?: number[],
+): { offsetMs: number; agreement: number; barMs?: number } | null {
+  if (taps.length === 0) return null;
+  if (beats && beats.length > beatsPerBar) {
+    const nearestIndex = (t: number) => {
+      let best = 0;
+      for (let i = 1; i < beats.length; i++) if (Math.abs(beats[i] - t) < Math.abs(beats[best] - t)) best = i;
+      return best;
+    };
+    const idx = taps.map(nearestIndex);
+    const votes = new Array<number>(beatsPerBar).fill(0);
+    for (const i of idx) votes[i % beatsPerBar]++;
+    const phase = votes.indexOf(Math.max(...votes));
+    let i0 = idx[0];
+    const d = (((phase - i0) % beatsPerBar) + beatsPerBar) % beatsPerBar;
+    // The phase-matching beat closest to the first tap (forward or back).
+    i0 = d <= beatsPerBar / 2 && i0 + d < beats.length ? i0 + d : i0 + d - beatsPerBar;
+    if (i0 < 0) i0 += beatsPerBar;
+    return { offsetMs: beats[i0], agreement: votes[phase] / taps.length };
+  }
+  if (taps.length < 2) return { offsetMs: taps[0], agreement: 1 };
+  const gaps = taps.slice(1).map((t, i) => t - taps[i]);
+  const sorted = [...gaps].sort((a, b) => a - b);
+  const bar = sorted[sorted.length >> 1];
+  // Missed taps leave gaps of two bars: count bars, not taps.
+  const k = taps.map((t) => Math.round((t - taps[0]) / bar));
+  const period = k[k.length - 1] > 0 ? (taps[taps.length - 1] - taps[0]) / k[k.length - 1] : bar;
+  const res = taps.map((t, i) => t - k[i] * period).sort((a, b) => a - b);
+  const on = taps.filter((t, i) => Math.abs(t - taps[0] - k[i] * period) < period / 8).length;
+  return { offsetMs: res[res.length >> 1], agreement: on / taps.length, barMs: period };
 }

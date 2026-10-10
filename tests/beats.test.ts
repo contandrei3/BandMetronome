@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeBeats, ANALYSIS_RATE, fitGrid } from '../src/analysis/beats';
+import { analyzeBeats, ANALYSIS_RATE, bar1FromTaps, fitGrid } from '../src/analysis/beats';
 
 /** Deterministic pseudo-random numbers. */
 function rng(seed: number) {
@@ -155,5 +155,22 @@ describe('beat analysis', () => {
     expect(f.period).toBeCloseTo(500);
     expect(f.offset).toBeCloseTo(100);
     expect(f.maxDeviation).toBeCloseTo(0);
+  });
+});
+
+describe('bar1FromTaps', () => {
+  const beats = Array.from({ length: 64 }, (_, i) => 1000 + i * 500);
+  it('picks the beat the taps agree on, despite sloppy taps', () => {
+    // The "1" is beat index 2 (2000 ms); taps up to 180 ms off, one on the wrong beat.
+    const taps = [2150, 3880, 6120, 8000, 9500, 12100];
+    const r = bar1FromTaps(taps, 4, beats)!;
+    expect(r.offsetMs).toBe(2000);
+    expect(r.agreement).toBeCloseTo(5 / 6);
+  });
+  it('works without detected beats, with a missed tap', () => {
+    const r = bar1FromTaps([1510, 3490, 7505, 9500], 4)!;
+    expect(r.offsetMs).toBeGreaterThan(1495);
+    expect(r.offsetMs).toBeLessThan(1515);
+    expect(r.barMs).toBeCloseTo(2000, -1);
   });
 });

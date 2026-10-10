@@ -1,5 +1,6 @@
 import { ROLES, type Role } from '../roles';
-import { analyzeBeats, decodeForAnalysis, fitGrid, tempoRange, type BeatAnalysis } from '../analysis/beats';
+import { analyzeBeats, bar1FromTaps, decodeForAnalysis, fitGrid, tempoRange, type BeatAnalysis } from '../analysis/beats';
+import { loadSettings } from '../settings';
 import { MetronomeEngine } from '../audio/engine';
 import {
   barsToCover,
@@ -266,7 +267,7 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
       analysisText.textContent =
         describe() +
         repaired +
-        ` Măsura 1 pusă pe primul timp 1 găsit (${(bar1 / 1000).toFixed(2)} s). Ascultă cu click; dacă nu cade pe 1, mută cu „o bătaie”.`;
+        ` Măsura 1 pusă pe primul timp 1 găsit (${(bar1 / 1000).toFixed(2)} s). Ascultă cu click; dacă nu cade pe 1, folosește „Bat pe 1” de mai jos.`;
       draft.track.follow = !isSteady(found.maxDeviationMs);
     } catch (e) {
       analysisText.textContent = `Nu a mers: ${(e as Error).message}. Poți seta BPM-ul și măsura 1 manual.`;
@@ -386,7 +387,107 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
   }
 
   previewBtn.onclick = () => (preview ? stopPreview() : startPreview(Number($<HTMLInputElement>('edPreviewBar').value) || 1));
-  return { stopPreview };
+
+  // ---- Bar 1 by ear: tap on every "1" while the file plays from its start ----
+  let tapping: { engine: MetronomeEngine; bar1At: number; taps: number[]; key: (e: KeyboardEvent) => void } | null = null;
+  const tapBox = $('edTapBox');
+  const tapResult = $('edTapResult');
+  const tapCount = $('edTapCount');
+
+  async function startTapping() {
+    if (!draft.track || tapping) return;
+    if (!canPreview()) {
+      tapResult.textContent = 'Oprește întâi metronomul din sesiune.';
+      return;
+    }
+    await stopPreview();
+    const engine = new MetronomeEngine();
+    await engine.start();
+    engine.latencyMs = 0;
+    engine.volume = 0; // only the music: a wrong click would mislead the ear
+    // The file from 0 s, whatever bar 1 is set to now.
+    const song = readDraft();
+    song.countInBars = 0;
+    song.track = { ...song.track!, offsetMs: 0, follow: false };
+    const t = songTransport(song, performance.now() + 600, 1, 1);
+    engine.setTransport(t);
+    const key = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || e.repeat) return;
+      e.preventDefault();
+      tap();
+    };
+    tapping = { engine, bar1At: t.song!.bar1At, taps: [], key };
+    document.addEventListener('keydown', key);
+    show(tapBox, true);
+    tapBox.classList.add('flex');
+    $('edTapStart').classList.add('hidden');
+    tapResult.textContent = '';
+    tapCount.textContent = 'Se încarcă negativul…';
+    for (const f of draft.track.files) {
+      engine.setFileVolume(f.id, f.volume);
+      const data = f.volume > 0 ? await getTrack(f.id) : undefined;
+      if (data && tapping?.engine === engine) await engine.addTrack(f.id, data);
+    }
+    if (tapping?.engine === engine) tapCount.textContent = 'Ascultă și apasă pe fiecare „1”';
+  }
+
+  function tap() {
+    if (!tapping) return;
+    // What the ear hears now left the phone one Bluetooth delay ago.
+    const at = performance.now() - loadSettings().latencyMs - tapping.bar1At;
+    if (at < 0) return;
+    tapping.taps.push(at);
+    tapCount.textContent = `${tapping.taps.length} × „1” · ${(at / 1000).toFixed(2)} s`;
+    const btn = $('edTap');
+    btn.style.transform = 'scale(0.97)';
+    setTimeout(() => (btn.style.transform = ''), 80);
+  }
+
+  async function stopTapping(apply: boolean) {
+    if (!tapping) return;
+    const { engine, taps, key } = tapping;
+    tapping = null;
+    document.removeEventListener('keydown', key);
+    show(tapBox, false);
+    tapBox.classList.remove('flex');
+    $('edTapStart').classList.remove('hidden');
+    await engine.dispose();
+    if (!apply || !draft.track) return;
+    if (taps.length < 3) {
+      tapResult.textContent = 'Prea puține apăsări: bate pe „1” cel puțin 3–4 măsuri.';
+      return;
+    }
+    const bpb = readDraft().markers[0]?.beatsPerBar ?? 4;
+    const r = bar1FromTaps(taps, bpb, draft.track.beats?.length ? draft.track.beats : undefined);
+    if (!r) return;
+    offsetInput.value = String(Math.round(r.offsetMs) / 1000);
+    const sure = r.agreement >= 0.75;
+    let msg = `Măsura 1 pusă la ${(r.offsetMs / 1000).toFixed(2)} s (${Math.round(r.agreement * 100)}% din apăsări pe același timp).`;
+    if (!draft.track.beats?.length && r.barMs) {
+      const bpm = (60000 * bpb) / r.barMs;
+      msg += ` Tempo după apăsări: ~${bpm.toFixed(1)} BPM. Pentru precizie apasă și „Detectează tempo-ul”, apoi bate din nou.`;
+    }
+    if (!sure) msg += ' ⚠ Apăsările nu au căzut mereu pe aceeași bătaie: mai încearcă o dată, mai atent la „1”.';
+    tapResult.textContent = msg;
+    updateLength();
+    fitLength();
+    void startPreview(1);
+  }
+
+  $('edTapStart').onclick = () => void startTapping();
+  $('edTap').onpointerdown = (e) => {
+    e.preventDefault();
+    tap();
+  };
+  $('edTapDone').onclick = () => void stopTapping(true);
+  $('edTapCancel').onclick = () => void stopTapping(false);
+
+  return {
+    async stopPreview() {
+      await stopTapping(false);
+      await stopPreview();
+    },
+  };
 }
 
 /** Under this, one BPM keeps every beat within ~25 ms of the recording for the whole song. */

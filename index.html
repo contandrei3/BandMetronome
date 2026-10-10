@@ -313,6 +313,20 @@
               <input id="edSteadyBar" type="number" inputmode="numeric" min="1" placeholder="—" class="w-20 rounded-lg bg-neutral-900 px-2 py-2 text-center text-neutral-100" />
               <span class="w-full text-xs text-neutral-500">Dacă intro-ul e doar chitară sau voce, click-ul de dinainte ia tempo-ul de unde intră tobele (ex. „5” = primele 4 măsuri). Gol = automat.</span>
             </label>
+            <div class="flex flex-col gap-2 rounded-xl bg-neutral-900/60 p-3 ring-1 ring-amber-500/30">
+              <div class="font-bold text-amber-400">Găsește măsura 1 după ureche</div>
+              <p class="text-xs leading-relaxed text-neutral-400">Pornește negativul de la început, fără click. Apasă butonul mare (sau Space) pe fiecare „1”, de la prima măsură a piesei, timp de 4–8 măsuri, apoi „Gata”. Nu trebuie să fii exact: aplicația alege bătaia cea mai apropiată.</p>
+              <button id="edTapStart" class="rounded-xl bg-amber-500 px-3 py-3 font-bold text-black">🥁 Bat pe „1”</button>
+              <div id="edTapBox" class="hidden flex-col gap-2">
+                <button id="edTap" class="h-32 select-none rounded-2xl bg-amber-500 text-4xl font-black text-black active:bg-amber-300">1</button>
+                <div class="flex items-center gap-2">
+                  <span id="edTapCount" class="flex-1 font-mono text-sm text-neutral-400"></span>
+                  <button id="edTapCancel" class="rounded-lg bg-neutral-800 px-3 py-2 text-sm font-bold">Renunță</button>
+                  <button id="edTapDone" class="rounded-lg bg-green-700 px-4 py-2 font-bold">Gata</button>
+                </div>
+              </div>
+              <p id="edTapResult" class="text-sm text-neutral-300"></p>
+            </div>
             <div>
               <div class="mb-1 text-xs text-neutral-500">Mută măsura 1 față de negativ:</div>
               <div class="grid grid-cols-3 gap-2 sm:grid-cols-6">
