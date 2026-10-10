@@ -30,6 +30,7 @@ import { openEditor, parseMeter } from './ui/editor';
 import { renderLiveSetlist, renderSetlist, renderSongList, type LibraryHandlers } from './ui/library';
 import { getTrack } from './tracks';
 import { keepScreenOn } from './wakeLock';
+import { diag } from './diagnostics';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const show = (el: HTMLElement, on = true) => {
@@ -322,7 +323,12 @@ async function boot(): Promise<MetronomeEngine> {
     if (document.visibilityState !== 'visible') return;
     void e.resume().then(() => setTimeout(checkAudio, 300));
   });
-  e.ctx.addEventListener('statechange', () => setTimeout(checkAudio, 300));
+  e.ctx.addEventListener('statechange', () => {
+    diag.log('audio-state', undefined, e.ctx.state);
+    setTimeout(checkAudio, 300);
+  });
+  document.addEventListener('visibilitychange', () => diag.log(document.visibilityState === 'visible' ? 'visible' : 'hidden'));
+  e.onEvent = (kind, value) => diag.log(kind, value);
   $('audioResume').onclick = () => {
     void e.resume().then(checkAudio);
     keepScreenOn();
@@ -376,10 +382,17 @@ async function startMember(code: string) {
   setBusy(null);
   const c = new ClientSession(code);
   client = c;
-  c.onState = setConnState;
+  c.onState = (s, detail) => {
+    if (s !== 'connecting') diag.log(s === 'connected' ? 'connected' : s === 'reconnecting' ? 'reconnect' : 'conn-error', undefined, detail);
+    setConnState(s, detail);
+  };
+  c.sync.onJump = (delta) => {
+    diag.log('sync-jump', delta);
+    e.clockChanged();
+  };
   c.getStatus = () => {
     const r = roleInfo(settings.role);
-    return { name: r ? `${r.icon} ${r.label}` : 'fără rol', latencyMs: settings.latencyMs };
+    return { name: r ? `${r.icon} ${r.label}` : 'fără rol', latencyMs: settings.latencyMs, problems: diag.problems(5 * 60000) };
   };
   c.onTransport = (t) => {
     transport = t;
@@ -392,6 +405,7 @@ async function startMember(code: string) {
   };
   // The master's clock restarted: stay silent until it is locked again (see frame()).
   c.onMasterRestart = () => {
+    diag.log('master-restart');
     transportApplied = false;
     e.setTransport(null);
   };
@@ -697,7 +711,9 @@ function renderMembers() {
     li.className = 'flex justify-between gap-2';
     li.innerHTML = '<span class="truncate font-bold text-neutral-300"></span><span class="font-mono"></span>';
     (li.children[0] as HTMLElement).textContent = m.name;
-    (li.children[1] as HTMLElement).textContent = `±${fmt(m.jitter / 2)} ms · BT ${m.latencyMs} ms`;
+    const warn = [m.weak ? 'Wi-Fi slab' : '', m.problems ? `${m.problems} probleme / 5 min` : ''].filter(Boolean).join(', ');
+    (li.children[1] as HTMLElement).textContent = `${warn ? `⚠ ${warn} · ` : ''}±${fmt(m.jitter / 2)} ms · BT ${m.latencyMs} ms`;
+    li.classList.toggle('text-amber-400', !!warn);
     $('members').append(li);
   }
 }
@@ -918,8 +934,10 @@ function frame() {
   const uncalibrated = settings.latencyMs === 0 ? ' · ⚠ latența căștilor e 0 (Setări → calibrare)' : '';
   if (client) {
     const s = client.sync.stats();
+    const weak = client.weak ? ' · ⚠ Wi-Fi slab: țin ceasul pe loc' : '';
     $('syncInfo').textContent =
       (client.sync.locked ? `sincronizat ±${fmt(s.jitter / 2)} ms · rtt ${fmt(s.minRtt)} ms` : `sincronizare ceas… (${s.samples})`) +
+      weak +
       uncalibrated;
   } else {
     $('syncInfo').textContent = uncalibrated.replace(' · ', '');
@@ -930,6 +948,40 @@ requestAnimationFrame(frame);
 function fmt(n: number): string {
   return Number.isFinite(n) ? n.toFixed(1) : '–';
 }
+
+// ---------- Diagnostics ----------
+
+let lastRunning: boolean | null = null;
+setInterval(() => {
+  if (!engine) return;
+  const running = transport.running && transportApplied;
+  if (running !== lastRunning) {
+    lastRunning = running;
+    diag.log(running ? 'play' : 'stop', undefined, transport.song?.title);
+  }
+  if (client?.sync.locked) {
+    const s = client.sync.stats();
+    diag.log('sync', s.jitter / 2, `rtt ${fmt(s.minRtt)} fast ${s.fast} off ${client.sync.offset.toFixed(1)}`);
+  }
+}, 15000);
+
+// The journal goes to Firebase once a minute, so it is there after the rehearsal.
+setInterval(() => {
+  if (!engine || !store.logDiagnostics) return;
+  const { events, done } = diag.pending();
+  if (!events.some((e) => e.kind !== 'sync')) return;
+  const r = roleInfo(settings.role);
+  store
+    .logDiagnostics({
+      device: diag.device,
+      role: master ? `master (${r?.label ?? '–'})` : (r?.label ?? '–'),
+      session: master?.code ?? client?.code ?? '',
+      build: __BUILD__,
+      userAgent: navigator.userAgent,
+      events,
+    })
+    .then(done, () => undefined);
+}, 60000);
 
 // Development-only handle for automated browser tests.
 if (import.meta.env.DEV) Object.assign(window, { __bm: { engine: () => engine, transport: () => transport } });

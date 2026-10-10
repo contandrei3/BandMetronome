@@ -9,7 +9,7 @@ export type Message =
   | { t: 'ping'; id: number; c0: number }
   | { t: 'pong'; id: number; c0: number; m: number; epoch: string }
   | { t: 'state'; transport: Transport; epoch: string }
-  | { t: 'status'; name: string; minRtt: number; jitter: number; latencyMs: number }
+  | { t: 'status'; name: string; minRtt: number; jitter: number; latencyMs: number; problems?: number; weak?: boolean }
   /** Backing tracks of the setlist, so members can fetch them before they are needed. */
   | { t: 'prefetch'; ids: string[] };
 
@@ -19,6 +19,10 @@ export interface MemberStatus {
   minRtt: number;
   jitter: number;
   latencyMs: number;
+  /** Timing problems on that phone in the last few minutes (see diagnostics). */
+  problems?: number;
+  /** Its Wi-Fi link is slow right now. */
+  weak?: boolean;
   lastSeen: number;
 }
 
@@ -198,7 +202,7 @@ export class ClientSession {
   /** The master page was reloaded: its clock restarted and sync starts over. */
   onMasterRestart: () => void = () => {};
   onState: (s: ConnState, detail?: string) => void = () => {};
-  getStatus: () => { name: string; latencyMs: number } = () => ({ name: '', latencyMs: 0 });
+  getStatus: () => { name: string; latencyMs: number; problems?: number } = () => ({ name: '', latencyMs: 0 });
 
   constructor(readonly code: string) {}
 
@@ -224,6 +228,13 @@ export class ClientSession {
 
   masterNow(): number {
     return performance.now() + this.sync.offset;
+  }
+
+  /** The link to the master is slow or silent right now (sync is being held, not followed). */
+  get weak(): boolean {
+    if (!this.sync.locked) return false;
+    const s = this.sync.stats();
+    return !s.fast || s.minRtt > 100 || performance.now() - this.lastHeard > 1500;
   }
 
   private connect(): void {
@@ -294,7 +305,7 @@ export class ClientSession {
     this.statusTimer = window.setInterval(() => {
       const s = this.sync.stats();
       if (this.conn?.open)
-        this.conn.send({ t: 'status', ...this.getStatus(), minRtt: s.minRtt, jitter: s.jitter } satisfies Message);
+        this.conn.send({ t: 'status', ...this.getStatus(), minRtt: s.minRtt, jitter: s.jitter, weak: this.weak } satisfies Message);
     }, 2000);
   }
 

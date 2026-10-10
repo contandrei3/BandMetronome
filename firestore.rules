@@ -2,7 +2,7 @@ rules_version = '2';
 
 // Paste into Firebase console → Firestore Database → Rules → Publish.
 // Anyone who opens the app signs in anonymously and may read and edit the
-// band's songs and setlist; nothing else in the database is reachable.
+// band's songs and setlist, and add timing journals; nothing else is reachable.
 service cloud.firestore {
   match /databases/{database}/documents {
     match /songs/{songId} {
@@ -15,6 +15,13 @@ service cloud.firestore {
     }
     match /meta/setlist {
       allow read, write: if request.auth != null;
+    }
+    // Timing journal from each phone (see src/diagnostics.ts): add-only.
+    match /diagnostics/{entryId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.events is list
+        && request.resource.data.events.size() <= 400;
     }
   }
 }

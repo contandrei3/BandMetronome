@@ -1,4 +1,5 @@
 import type { FirebaseOptions } from 'firebase/app';
+import type { DiagUpload } from './diagnostics';
 import type { Song } from './song';
 import { readLocalLibrary, type Library, type LibraryStore } from './store';
 
@@ -80,6 +81,9 @@ export async function createFirebaseStore(config: FirebaseOptions): Promise<Libr
     },
     async saveSetlist(ids: string[]) {
       await fs.setDoc(setlistDoc, { ids });
+    },
+    async logDiagnostics(entry: DiagUpload) {
+      await fs.addDoc(fs.collection(db, 'diagnostics'), { ...entry, uploadedAt: fs.serverTimestamp() });
     },
   };
 }

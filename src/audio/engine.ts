@@ -11,8 +11,14 @@ export interface TimeSource {
 export const IDENTITY_TIME: TimeSource = { masterToLocal: (t) => t, localToMaster: (t) => t };
 
 const TICK_INTERVAL_MS = 25;
-/** How far ahead clicks are handed to the audio hardware, in seconds. */
-const HORIZON_S = 0.3;
+/**
+ * How far ahead clicks are handed to the audio hardware, in seconds. Long, so
+ * a busy or throttled phone (a file arriving, a notification) never runs dry;
+ * every change of tempo, mix or clock reschedules what is queued anyway.
+ */
+const HORIZON_S = 0.8;
+/** A scheduler tick this late means the page was stalled. */
+const STALL_MS = 250;
 /** Clicks closer than this to "now" are dropped rather than played late. */
 const MIN_LEAD_S = 0.003;
 
@@ -27,10 +33,16 @@ class AudioClock {
 
   constructor(private readonly ctx: AudioContext) {}
 
-  update(): void {
+  /** Returns the jump in ms when the audio clock moved abruptly (output glitch, device change). */
+  update(): number {
     const d = this.measure();
-    if (this.delta === null || Math.abs(d - this.delta) > 0.05) this.delta = d;
-    else this.delta += (d - this.delta) * 0.1;
+    if (this.delta === null) this.delta = d;
+    else if (Math.abs(d - this.delta) > 0.05) {
+      const jump = (d - this.delta) * 1000;
+      this.delta = d;
+      return jump;
+    } else this.delta += (d - this.delta) * 0.1;
+    return 0;
   }
 
   perfToCtx(perfMs: number): number {
@@ -67,6 +79,9 @@ export class MetronomeEngine {
   private _subdivision: Subdivision = 1;
   private _latencyMs = 0;
   private readonly track: TrackPlayer;
+  private lastTick = 0;
+  /** Something that affects timing happened on this device (see diagnostics). */
+  onEvent: (kind: 'stall' | 'late' | 'audio-jump' | 'track-resync', value: number) => void = () => {};
 
   constructor() {
     // iPhone: play like a music app, so the ring/silent switch does not mute the click (iOS 17+).
@@ -87,6 +102,7 @@ export class MetronomeEngine {
       ctxForMaster: (m) => this.clock.perfToCtx(this.timeSource.masterToLocal(m) - this._latencyMs),
       masterForCtx: (c) => this.timeSource.localToMaster(this.clock.ctxToPerf(c) + this._latencyMs),
     });
+    this.track.onResync = (ms) => this.onEvent('track-resync', ms);
   }
 
   /** Volume of all backing tracks together, separate from the click. */
@@ -134,6 +150,7 @@ export class MetronomeEngine {
     await Promise.race([this.ctx.resume(), new Promise((r) => setTimeout(r, 2000))]);
     this.startKeepAlive();
     this.clock.update();
+    this.lastTick = performance.now();
     if (this.timer === undefined) this.timer = window.setInterval(() => this.tick(), TICK_INTERVAL_MS);
   }
 
@@ -154,6 +171,11 @@ export class MetronomeEngine {
   /** Delay between this device scheduling a sound and the ear hearing it (Bluetooth). */
   set latencyMs(ms: number) {
     this._latencyMs = ms;
+    this.reschedule();
+  }
+
+  /** The master clock estimate jumped: re-place what is already queued. */
+  clockChanged(): void {
     this.reschedule();
   }
 
@@ -218,13 +240,23 @@ export class MetronomeEngine {
   }
 
   private tick(): void {
-    this.clock.update();
+    const perf = performance.now();
+    const gap = perf - this.lastTick;
+    this.lastTick = perf;
+    const jump = this.clock.update();
+    if (jump !== 0 && this.ctx.state === 'running') {
+      this.onEvent('audio-jump', jump);
+      // Queued clicks were placed with the old audio clock.
+      if (this.transport?.running) return this.reschedule();
+    }
     const now = this.ctx.currentTime;
     this.scheduled = this.scheduled.filter((s) => s.when > now - 1);
     const t = this.transport;
     if (this.ctx.state === 'running') this.track.update(t);
     if (!t || !t.running || this.ctx.state !== 'running') return;
+    if (gap > STALL_MS && document.visibilityState === 'visible') this.onEvent('stall', gap);
 
+    let late = 0;
     // Bounded so a malformed transport (NaN times) can never freeze the page.
     for (let guard = 0; guard < 2000; guard++) {
       const tick = tickAt(t, this._subdivision, this.nextIndex);
@@ -233,9 +265,10 @@ export class MetronomeEngine {
       if (!(when <= now + HORIZON_S)) break;
       if (when >= now + MIN_LEAD_S && tick.audible) {
         this.scheduled.push({ when, nodes: scheduleClick(this.ctx, this.out, this._sound, tick.level, when, this.noise) });
-      }
+      } else if (tick.audible) late++;
       this.nextIndex++;
     }
+    if (late) this.onEvent('late', late);
   }
 
   /**

@@ -34,6 +34,8 @@ export class TrackPlayer {
   private gains = new Map<string, GainNode>();
   /** All files together ("Volum negative"). */
   readonly gain: GainNode;
+  /** A playing file was this far off (ms) and had to be restarted at the right spot. */
+  onResync: (errMs: number) => void = () => {};
 
   constructor(
     private readonly ctx: AudioContext,
@@ -102,6 +104,7 @@ export class TrackPlayer {
           v.src.playbackRate.setValueAtTime(v.rate, now);
           return;
         }
+        this.onResync(err * 1000);
       }
     }
     this.stopVoice(id);

@@ -1,3 +1,4 @@
+import type { DiagUpload } from './diagnostics';
 import type { Song } from './song';
 
 /** The band's song library and the running order for tonight. */
@@ -19,6 +20,8 @@ export interface LibraryStore {
   saveSong(song: Song): Promise<void>;
   deleteSong(id: string): Promise<void>;
   saveSetlist(ids: string[]): Promise<void>;
+  /** Stores a batch of this phone's timing journal (cloud only). */
+  logDiagnostics?(entry: DiagUpload): Promise<void>;
 }
 
 const KEY = 'bandmetro.library.v1';
