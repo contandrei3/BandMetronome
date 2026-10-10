@@ -301,6 +301,9 @@
           <div id="edTrackTools" class="flex flex-col gap-3">
             <div class="flex flex-wrap items-center gap-2">
               <button id="edAnalyze" class="rounded-xl bg-neutral-900 px-3 py-2 font-bold ring-1 ring-neutral-700 disabled:opacity-40">🔍 Detectează tempo-ul</button>
+              <label class="flex items-center gap-2 text-sm text-neutral-400">BPM aprox.
+                <input id="edBpmHint" type="number" inputmode="decimal" min="40" max="260" placeholder="auto" class="w-20 rounded-lg bg-neutral-900 px-2 py-2 text-center text-neutral-100" />
+              </label>
               <button id="edApplyBpm" class="hidden rounded-xl bg-amber-500 px-3 py-2 font-bold text-black">Folosește BPM-ul găsit</button>
             </div>
             <p id="edAnalysis" class="text-sm leading-relaxed text-neutral-400"></p>
@@ -311,7 +314,7 @@
             <label class="flex flex-wrap items-center gap-2 text-sm text-neutral-300">
               <span>Tobele (ritmul clar) intră la măsura</span>
               <input id="edSteadyBar" type="number" inputmode="numeric" min="1" placeholder="—" class="w-20 rounded-lg bg-neutral-900 px-2 py-2 text-center text-neutral-100" />
-              <span class="w-full text-xs text-neutral-500">Dacă intro-ul e doar chitară sau voce, click-ul de dinainte ia tempo-ul de unde intră tobele (ex. „5” = primele 4 măsuri). Gol = automat.</span>
+              <span class="w-full text-xs text-neutral-500">Dacă intro-ul e doar chitară sau voce, click-ul de dinainte ia tempo-ul de unde intră tobele (ex. „5” = primele 4 măsuri). Gol = automat (aplicația găsește singură unde devine ritmul clar); 1 = urmează detecția de la început.</span>
             </label>
             <div class="flex flex-col gap-2 rounded-xl bg-neutral-900/60 p-3 ring-1 ring-amber-500/30">
               <div class="font-bold text-amber-400">Găsește măsura 1 după ureche</div>

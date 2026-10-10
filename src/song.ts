@@ -332,14 +332,9 @@ function beatMapSegments(song: Song): { segs: Segment[]; offsetMs: number } {
  * the misleading intro detections then influence nothing.
  */
 function withSteadyIntro(song: Song, raw: number[], b0: number): number[] {
-  const from = song.track?.steadyFromBar;
-  let k0 = b0;
-  for (let bar = 0; from && bar < from - 1; bar++) {
-    let bpb = 4;
-    for (const m of song.markers) if (m.bar - 1 <= bar && m.beatsPerBar !== undefined) bpb = m.beatsPerBar;
-    k0 += bpb;
-  }
-  if (!from || from <= 1 || k0 <= 0 || raw.length - k0 < 8) return smoothBeats(raw);
+  const from = song.track?.steadyFromBar ?? findSteadyBar(song, raw, b0);
+  const k0 = beatOfBar(song, b0, from);
+  if (from <= 1 || k0 <= 0 || raw.length - k0 < 8) return smoothBeats(raw);
   const tail = smoothBeats(raw.slice(k0));
   const ref = tail.slice(0, 32);
   const n = ref.length;
@@ -356,6 +351,55 @@ function withSteadyIntro(song: Song, raw: number[], b0: number): number[] {
   const anchor = near.reduce((a, v, j) => a + v - slope * j, 0) / near.length;
   const intro = Array.from({ length: k0 }, (_, k) => anchor + slope * (k - k0));
   return [...intro, ...tail];
+}
+
+/** Index in the beat map of the first beat of `bar` (1-based), bar 1 being beat `b0`. */
+function beatOfBar(song: Song, b0: number, bar: number): number {
+  let k = b0;
+  for (let b = 0; b < bar - 1; b++) {
+    let bpb = 4;
+    for (const m of song.markers) if (m.bar - 1 <= b && m.beatsPerBar !== undefined) bpb = m.beatsPerBar;
+    k += bpb;
+  }
+  return k;
+}
+
+/**
+ * The first bar from which the detected beats are steady, when the song
+ * starts with an intro whose detection is unreliable (guitar or voice only:
+ * beats wandering by 100 ms and more). From there on 8 bars of beats lie
+ * close to a straight line; a drum groove does, a misdetected intro does not.
+ * Returns 1 when the song is steady from the start (or nothing better is found).
+ */
+export function findSteadyBar(song: Song, raw: number[], b0: number): number {
+  for (let bar = 1; bar <= 17; bar++) {
+    const k = beatOfBar(song, b0, bar);
+    const w = raw.slice(k, k + 32);
+    if (w.length < 32) return 1;
+    const n = w.length;
+    const mx = (n - 1) / 2;
+    const my = w.reduce((a, v) => a + v, 0) / n;
+    let sxx = 0;
+    let sxy = 0;
+    w.forEach((v, j) => {
+      sxx += (j - mx) ** 2;
+      sxy += (j - mx) * (v - my);
+    });
+    const slope = sxy / sxx;
+    const res = w.map((v, j) => Math.abs(v - (my + slope * (j - mx))));
+    if (Math.max(...res) < 45 && res.reduce((a, v) => a + v, 0) / n < 15) return bar;
+  }
+  return 1;
+}
+
+/** Bar from which the click takes the detected tempo as is (see findSteadyBar). */
+export function steadyBarOf(song: Song): number {
+  const raw = song.track?.beats;
+  if (!song.track?.follow || !raw?.length) return 1;
+  if (song.track.steadyFromBar) return song.track.steadyFromBar;
+  let b0 = 0;
+  for (let i = 1; i < raw.length; i++) if (Math.abs(raw[i] - song.track.offsetMs) < Math.abs(raw[b0] - song.track.offsetMs)) b0 = i;
+  return findSteadyBar(song, raw, b0);
 }
 
 /** How long the click runs from bar 1 to the end of the song, in ms. */

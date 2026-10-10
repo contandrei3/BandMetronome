@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { rebaseTransport } from '../src/masterState';
-import { normalizeTrack, songTransport, type Song } from '../src/song';
+import { findSteadyBar, normalizeTrack, songTransport, type Song } from '../src/song';
 import { trackPositionAt, trackStartAt } from '../src/tracks';
 import { tickAt } from '../src/timeline';
 import { smoothBeats, tempoRange } from '../src/analysis/beats';
@@ -167,5 +167,30 @@ describe('drums come in later (steadyFromBar)', () => {
   it('with it the intro takes the tempo of the bars where the drums play', () => {
     const t = songTransport({ ...base, track: { ...base.track!, steadyFromBar: 5 } }, 0, 1);
     for (let k = 0; k < 40; k++) expect(Math.abs(errAt(t, k))).toBeLessThan(3);
+  });
+});
+
+describe('intro without a clear beat', () => {
+  // 4 bars of guitar intro detected ±100 ms off, then a steady drum groove at 96 BPM.
+  const wobble = [0, 60, -80, 110, -40, 90, -120, 30, 100, -60, 70, -100, 50, -90, 120, -30];
+  const truth = Array.from({ length: 120 }, (_, k) => 600 + k * 625);
+  const beats = truth.map((t, k) => t + (k < 16 ? wobble[k] : (k % 2 ? 8 : -8)));
+  const s: Song = {
+    ...song,
+    bars: 28,
+    markers: [{ bar: 1, bpm: 96, beatsPerBar: 4 }],
+    track: { files: [{ id: 'abc', name: 'a.mp3', label: 'Original', durationMs: 80000, volume: 1 }], offsetMs: 600, beats, follow: true },
+  };
+
+  it('finds where the beat becomes steady', () => {
+    expect(findSteadyBar(s, beats, 0)).toBe(5);
+    expect(findSteadyBar(s, truth, 0)).toBe(1);
+  });
+
+  it('puts the intro clicks on the groove tempo extended backwards', () => {
+    const t = songTransport(s, 0, 1);
+    for (let k = 0; k < 24; k++) {
+      expect(Math.abs(trackPositionAt(t.song!, tickAt(t, 1, k).time)! - truth[k])).toBeLessThan(6);
+    }
   });
 });

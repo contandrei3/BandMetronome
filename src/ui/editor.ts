@@ -4,6 +4,7 @@ import { loadSettings } from '../settings';
 import { MetronomeEngine } from '../audio/engine';
 import {
   barsToCover,
+  steadyBarOf,
   newSong,
   normalizeSong,
   normalizeTrack,
@@ -145,6 +146,7 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
     follow.checked = !!draft.track?.follow && !follow.disabled;
     // A fixed BPM is only offered when it can actually hold for the whole song.
     applyBpm.classList.toggle('hidden', !found || !isSteady(found.maxDeviationMs));
+    showSteady();
     updateLength();
   };
 
@@ -245,6 +247,31 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
     fileInput.value = '';
   };
 
+  /** Detects the beats of the tempo file; `hint` (BPM) when the user knows roughly the tempo. */
+  async function analyze(hint?: number): Promise<boolean> {
+    if (!draft.track) return false;
+    const data = await getTrack(draft.track.tempoFile ?? draft.track.files[0].id);
+    if (!data) throw new Error('fișierul nu e pe acest dispozitiv');
+    const first = readDraft().markers[0];
+    found = analyzeBeats(await decodeForAnalysis(data), hint, first?.beatsPerBar ?? 4);
+    if (!found) throw new Error('nu am găsit un ritm clar');
+    draft.track.beats = found.beats.map((b) => Math.round(b * 10) / 10);
+    draft.track.follow = !isSteady(found.maxDeviationMs);
+    return true;
+  }
+
+  const analysisNote = () => {
+    const repaired = found?.extrapolated
+      ? ` ${found.extrapolated} bătăi fără un ritm clar (ex. intro fără tobe) au primit tempo-ul părții cu tobe de lângă ele.`
+      : '';
+    const avg = found ? 60000 / fitGrid(draft.track!.beats!).period : 0;
+    return (
+      describe() +
+      repaired +
+      ` Tempo găsit: ~${avg.toFixed(0)} BPM — dacă piesa e de fapt mai rapidă sau mai lentă (ex. dublu), scrie-l la „BPM aprox.” și detectează din nou, sau folosește „Bat pe 1”, care îl corectează singur.`
+    );
+  };
+
   $('edAnalyze').onclick = async () => {
     if (!draft.track) return;
     const btn = $<HTMLButtonElement>('edAnalyze');
@@ -252,23 +279,13 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
     analysisText.textContent = 'Analizez negativul… (câteva secunde)';
     await new Promise((r) => setTimeout(r, 30)); // let the message show before the heavy work
     try {
-      const data = await getTrack(draft.track.tempoFile ?? draft.track.files[0].id);
-      if (!data) throw new Error('fișierul nu e pe acest dispozitiv');
-      const first = readDraft().markers[0];
-      found = analyzeBeats(await decodeForAnalysis(data), first?.bpm, first?.beatsPerBar ?? 4);
-      if (!found) throw new Error('nu am găsit un ritm clar');
-      draft.track.beats = found.beats.map((b) => Math.round(b * 10) / 10);
+      const hint = Number($<HTMLInputElement>('edBpmHint').value);
+      await analyze(hint >= 40 && hint <= 260 ? hint : undefined);
       // Bar 1 on the first detected beat 1 (where chords change / the kick lands).
-      const bar1 = draft.track.beats[found.downbeat];
+      const bar1 = draft.track.beats![found!.downbeat];
       offsetInput.value = String(bar1 / 1000);
-      const repaired = found.extrapolated
-        ? ` ${found.extrapolated} bătăi fără un ritm clar (ex. intro fără tobe) au primit tempo-ul părții cu tobe de lângă ele.`
-        : '';
       analysisText.textContent =
-        describe() +
-        repaired +
-        ` Măsura 1 pusă pe primul timp 1 găsit (${(bar1 / 1000).toFixed(2)} s). Ascultă cu click; dacă nu cade pe 1, folosește „Bat pe 1” de mai jos.`;
-      draft.track.follow = !isSteady(found.maxDeviationMs);
+        analysisNote() + ` Măsura 1 pusă pe primul timp 1 găsit (${(bar1 / 1000).toFixed(2)} s). Ascultă cu click; dacă nu cade pe 1, folosește „Bat pe 1” de mai jos.`;
     } catch (e) {
       analysisText.textContent = `Nu a mers: ${(e as Error).message}. Poți seta BPM-ul și măsura 1 manual.`;
     }
@@ -294,10 +311,18 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
 
   const steady = $<HTMLInputElement>('edSteadyBar');
   steady.value = draft.track?.steadyFromBar ? String(draft.track.steadyFromBar) : '';
+  /** Shows which bar the automatic choice picked, as the field's placeholder. */
+  function showSteady() {
+    const auto = draft.track?.beats?.length && draft.track.follow ? steadyBarOf({ ...readDraft(), track: { ...draft.track, steadyFromBar: undefined } }) : 1;
+    $<HTMLInputElement>('edSteadyBar').placeholder = auto > 1 ? `auto: ${auto}` : 'auto';
+  }
+  showSteady();
   steady.onchange = () => {
     if (!draft.track) return;
     const bar = Math.round(Number(steady.value));
-    draft.track.steadyFromBar = bar > 1 ? bar : undefined;
+    // Empty = automatic; 1 = follow the detection from the very start.
+    draft.track.steadyFromBar = bar >= 1 ? bar : undefined;
+    showSteady();
     void restartPreview();
   };
 
@@ -458,6 +483,28 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
       return;
     }
     const bpb = readDraft().markers[0]?.beatsPerBar ?? 4;
+    // The taps also tell the real tempo: when the detection locked onto a
+    // wrong multiple (2/3, double, half), detect again around the tapped one.
+    const grid = bar1FromTaps(taps, bpb);
+    let retimed = '';
+    const beats = draft.track.beats;
+    if (grid?.barMs && beats && beats.length > bpb) {
+      const tappedBpm = (60000 * bpb) / grid.barMs;
+      const near = beats.filter((b) => b >= taps[0] - 2000 && b <= taps[taps.length - 1] + 2000);
+      const detectedBpm = near.length > 2 ? (60000 * (near.length - 1)) / (near[near.length - 1] - near[0]) : 0;
+      if (detectedBpm && Math.abs(Math.log(tappedBpm / detectedBpm)) > 0.08) {
+        tapResult.textContent = `Tempo-ul detectat (~${detectedBpm.toFixed(0)}) nu se potrivește cu apăsările (~${tappedBpm.toFixed(0)}): detectez din nou…`;
+        try {
+          await analyze(tappedBpm);
+          $<HTMLInputElement>('edBpmHint').value = String(Math.round(tappedBpm));
+          analysisText.textContent = analysisNote();
+          retimed = ` Tempo corectat după apăsări: ~${(60000 / fitGrid(draft.track.beats!).period).toFixed(0)} BPM.`;
+        } catch {
+          retimed = ' (Nu am putut detecta din nou tempo-ul.)';
+        }
+        paint();
+      }
+    }
     const r = bar1FromTaps(taps, bpb, draft.track.beats?.length ? draft.track.beats : undefined);
     if (!r) return;
     offsetInput.value = String(Math.round(r.offsetMs) / 1000);
@@ -467,6 +514,7 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
       const bpm = (60000 * bpb) / r.barMs;
       msg += ` Tempo după apăsări: ~${bpm.toFixed(1)} BPM. Pentru precizie apasă și „Detectează tempo-ul”, apoi bate din nou.`;
     }
+    msg += retimed;
     if (!sure) msg += ' ⚠ Apăsările nu au căzut mereu pe aceeași bătaie: mai încearcă o dată, mai atent la „1”.';
     tapResult.textContent = msg;
     updateLength();
