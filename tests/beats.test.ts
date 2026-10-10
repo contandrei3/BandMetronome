@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeBeats, ANALYSIS_RATE, bar1FromTaps, fitGrid, spliceTappedIntro } from '../src/analysis/beats';
+import { analyzeBeats, ANALYSIS_RATE, bar1FromTaps, firstSoundMs, fitGrid, spliceTappedIntro } from '../src/analysis/beats';
 
 /** Deterministic pseudo-random numbers. */
 function rng(seed: number) {
@@ -198,5 +198,17 @@ describe('spliceTappedIntro', () => {
     // The calibration taps on the drums: tapped for the first ones, then the detection.
     expect(Math.abs(r.beats[16] - drums[0])).toBeLessThan(16);
     expect(r.beats.slice(18)).toEqual(drums.slice(2));
+  });
+});
+
+describe('firstSoundMs', () => {
+  it('finds where the music starts after silence', () => {
+    const rate = 11025;
+    const x = new Float32Array(rate * 2);
+    for (let i = Math.round(rate * 0.73); i < x.length; i++) x[i] = Math.sin(i / 3) * Math.exp(-(i - rate * 0.73) / 2000) * 0.8;
+    for (let i = 0; i < x.length; i++) x[i] += (Math.sin(i * 12.9898) * 43758.5453 % 1) * 0.0005;
+    const t = firstSoundMs(x, rate);
+    expect(t).toBeGreaterThan(715);
+    expect(t).toBeLessThan(735);
   });
 });

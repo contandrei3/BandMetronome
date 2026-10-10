@@ -1,5 +1,5 @@
 import { ROLES, type Role } from '../roles';
-import { analyzeBeats, bar1FromTaps, decodeForAnalysis, spliceTappedIntro, fitGrid, tempoRange, type BeatAnalysis } from '../analysis/beats';
+import { analyzeBeats, bar1FromTaps, decodeForAnalysis, firstSoundMs, spliceTappedIntro, fitGrid, tempoRange, type BeatAnalysis } from '../analysis/beats';
 import { loadSettings } from '../settings';
 import { MetronomeEngine } from '../audio/engine';
 import {
@@ -416,13 +416,24 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
   // ---- Bar 1 by ear: tap on every "1" while the file plays from its start ----
   /** 'one': tap the "1"s to place bar 1. 'every': tap every beat of a freely played intro. */
   type TapMode = 'one' | 'every';
-  let tapping: { engine: MetronomeEngine; bar1At: number; taps: number[]; key: (e: KeyboardEvent) => void; mode: TapMode } | null = null;
+  let tapping: {
+    engine: MetronomeEngine;
+    /** When file position 0 plays (performance.now() ms), and when the count-in ends. */
+    bar1At: number;
+    musicAt: number;
+    taps: number[];
+    key: (e: KeyboardEvent) => void;
+    mode: TapMode;
+  } | null = null;
   const tapBox = $('edTapBox');
   const tapResult = $('edTapResult');
   const tapCount = $('edTapCount');
+  /** Where the music starts in each file (ms), measured once. */
+  const firstSound = new Map<string, number>();
 
+  let starting = false;
   async function startTapping(mode: TapMode) {
-    if (!draft.track || tapping) return;
+    if (!draft.track || tapping || starting) return;
     if (mode === 'every' && !draft.track.beats?.length) {
       tapResult.textContent = 'Apasă întâi „Detectează tempo-ul”: după intro, click-ul urmează tempo-ul detectat.';
       return;
@@ -431,13 +442,39 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
       tapResult.textContent = 'Oprește întâi metronomul din sesiune.';
       return;
     }
+    starting = true;
     await stopPreview();
     const engine = new MetronomeEngine();
     await engine.start();
     engine.latencyMs = 0;
-    // A count-in up to the current bar 1, then only the music: a wrong click would mislead the ear.
+    tapResult.textContent = '';
+    tapCount.textContent = 'Pregătesc…';
+    $('edTapStart').classList.add('hidden');
+    $('edTapEvery').classList.add('hidden');
+    // A one-bar count-in that ends where the music starts, then only the music
+    // (a click on a wrong bar 1 would mislead the ear).
+    const tempoFile = draft.track.tempoFile ?? draft.track.files[0].id;
+    let start = firstSound.get(tempoFile);
+    if (start === undefined) {
+      const data = await getTrack(tempoFile);
+      start = data ? firstSoundMs(await decodeForAnalysis(data)) : 0;
+      firstSound.set(tempoFile, start);
+    }
     const song = readDraft();
-    song.countInBars = Math.max(1, song.countInBars);
+    const beats = draft.track.beats ?? [];
+    const early = beats.filter((b) => b >= start! - 100).slice(0, 9);
+    const bpm = early.length >= 5 ? (60000 * (early.length - 1)) / (early[early.length - 1] - early[0]) : (song.markers[0]?.bpm ?? 120);
+    song.countInBars = 1;
+    song.markers = [{ ...song.markers[0], bar: 1, bpm: Math.round(bpm * 100) / 100 }];
+    song.track = { ...song.track!, offsetMs: start, follow: false };
+    // Decode the files first, so the music is there when the count-in ends.
+    tapCount.textContent = 'Se încarcă negativul…';
+    engine.setTransport(songTransport(song, performance.now() + 3600e3, 1, 1));
+    for (const f of draft.track.files) {
+      engine.setFileVolume(f.id, f.volume);
+      const data = f.volume > 0 ? await getTrack(f.id) : undefined;
+      if (data) await engine.addTrack(f.id, data);
+    }
     const t = songTransport(song, performance.now() + 600, 1, 1);
     engine.setTransport(t);
     engine.muteClickFrom(t.song!.bar1At);
@@ -446,22 +483,15 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
       e.preventDefault();
       tap();
     };
-    tapping = { engine, bar1At: t.song!.bar1At - (t.song!.track?.offsetMs ?? 0), taps: [], key, mode };
+    tapping = { engine, bar1At: t.song!.bar1At - (t.song!.track?.offsetMs ?? 0), musicAt: t.song!.bar1At, taps: [], key, mode };
+    starting = false;
     $('edTap').textContent = mode === 'one' ? '1' : 'TIMP';
     document.addEventListener('keydown', key);
     show(tapBox, true);
     tapBox.classList.add('flex');
     $('edTapStart').classList.add('hidden');
     $('edTapEvery').classList.add('hidden');
-    tapResult.textContent = '';
-    tapCount.textContent = 'Se încarcă negativul…';
-    for (const f of draft.track.files) {
-      engine.setFileVolume(f.id, f.volume);
-      const data = f.volume > 0 ? await getTrack(f.id) : undefined;
-      if (data && tapping?.engine === engine) await engine.addTrack(f.id, data);
-    }
-    if (tapping?.engine === engine)
-      tapCount.textContent =
+    tapCount.textContent =
         mode === 'one'
           ? 'După count-in, apasă pe fiecare „1”'
           : 'După count-in, apasă pe fiecare timp, până la 2 măsuri după ce intră tobele';
@@ -470,8 +500,13 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
   function tap() {
     if (!tapping) return;
     // What the ear hears now left the phone one Bluetooth delay ago.
-    const at = performance.now() - loadSettings().latencyMs - tapping.bar1At;
-    if (at < 0) return;
+    const heard = performance.now() - loadSettings().latencyMs;
+    // Taps along with the count-in are not beats of the song.
+    if (heard < tapping.musicAt - 150) {
+      tapCount.textContent = 'Așteaptă să se termine count-in-ul…';
+      return;
+    }
+    const at = heard - tapping.bar1At;
     tapping.taps.push(at);
     tapCount.textContent = `${tapping.taps.length} × ${tapping.mode === 'one' ? '„1”' : 'timp'} · ${(at / 1000).toFixed(2)} s`;
     const btn = $('edTap');
@@ -560,8 +595,15 @@ function setupTrackTools(draft: Song, readDraft: () => Song, list: HTMLElement, 
     void startPreview(1);
   }
 
-  $('edTapStart').onclick = () => void startTapping('one');
-  $('edTapEvery').onclick = () => void startTapping('every');
+  const tapFailed = (e: unknown) => {
+    starting = false;
+    $('edTapStart').classList.remove('hidden');
+    $('edTapEvery').classList.remove('hidden');
+    tapCount.textContent = '';
+    tapResult.textContent = `Nu a mers: ${(e as Error)?.message ?? e}`;
+  };
+  $('edTapStart').onclick = () => startTapping('one').catch(tapFailed);
+  $('edTapEvery').onclick = () => startTapping('every').catch(tapFailed);
   $('edTap').onpointerdown = (e) => {
     e.preventDefault();
     tap();

@@ -574,3 +574,23 @@ export function spliceTappedIntro(detected: number[], taps: number[], overlap = 
   const intro = tapped.filter((t) => t < detected[joinBeat] - period / 2);
   return { beats: [...intro, ...detected.slice(joinBeat)], biasMs, joinAt: intro.length };
 }
+
+/**
+ * When the music starts (ms): the first 10 ms stretch louder than 5% of the
+ * file's loudest one, moved back to where that note's attack begins.
+ */
+export function firstSoundMs(samples: Float32Array, rate = ANALYSIS_RATE): number {
+  const win = Math.max(1, Math.round(rate / 100));
+  const rms: number[] = [];
+  for (let o = 0; o + win <= samples.length; o += win) {
+    let s = 0;
+    for (let i = o; i < o + win; i++) s += samples[i] * samples[i];
+    rms.push(Math.sqrt(s / win));
+  }
+  const peak = Math.max(0, ...rms);
+  if (peak === 0) return 0;
+  let k = rms.findIndex((v) => v > 0.05 * peak);
+  // Back to the start of the attack (where it rises out of the silence).
+  while (k > 0 && rms[k - 1] > 0.005 * peak) k--;
+  return ((k * win) / rate) * 1000;
+}
